@@ -31,8 +31,16 @@ jobs:
         id: sim
         run: |
           # -showdestinations lists only simulators this Xcode can run the scheme on.
-          LINE=$(xcodebuild -showdestinations -project SmartGroceryReminder.xcodeproj -scheme SmartGroceryReminder \
-            | grep -m1 'platform:iOS Simulator.*name:iPhone')
+          find_sim() {
+            xcodebuild -showdestinations -project SmartGroceryReminder.xcodeproj -scheme SmartGroceryReminder 2>&1 \
+              | tee /dev/stderr | grep -m1 'platform:iOS Simulator.*name:iPhone' || true
+          }
+          LINE=$(find_sim)
+          if [ -z "$LINE" ]; then
+            echo "No iPhone simulator for this Xcode; downloading the iOS platform..."
+            xcodebuild -downloadPlatform iOS
+            LINE=$(find_sim)
+          fi
           echo "Using simulator: $LINE"
           UDID=$(echo "$LINE" | sed -E 's/.*id:([^,]+),.*/\1/')
           test -n "$UDID"
