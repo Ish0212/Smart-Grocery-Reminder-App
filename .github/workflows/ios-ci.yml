@@ -35,15 +35,29 @@ jobs:
             xcodebuild -showdestinations -project SmartGroceryReminder.xcodeproj -scheme SmartGroceryReminder 2>&1 \
               | tee /dev/stderr | grep -m1 'platform:iOS Simulator.*name:iPhone' || true
           }
-          LINE=$(find_sim)
+          # The runner's default Xcode may not match the installed simulator runtimes,
+          # so try each installed Xcode (newest first) until one lists an iPhone simulator.
+          LINE=""
+          for XC in $(ls -d /Applications/Xcode_*.app | sort -rV); do
+            sudo xcode-select -s "$XC"
+            echo "Trying $XC"
+            LINE=$(find_sim)
+            [ -n "$LINE" ] && break
+          done
           if [ -z "$LINE" ]; then
-            # Runtime may be present with no devices; create one from the newest iPhone type and iOS runtime.
-            DEVTYPE=$(xcrun simctl list devicetypes | grep -E '^iPhone' | tail -1 | sed -E 's/.*\((com\.apple[^)]*)\).*/\1/')
-            RUNTIME=$(xcrun simctl list runtimes available | grep -E '^iOS' | tail -1 | sed -E 's/.* - (com\.apple\.CoreSimulator\.SimRuntime\.[^ ]+).*/\1/')
+            # Runtime present but no devices: create one using a device type the newest iOS runtime supports.
+            read -r DEVTYPE RUNTIME < <(xcrun simctl list runtimes available -j | python3 -c '
+          import json, sys
+          rts = [r for r in json.load(sys.stdin)["runtimes"] if r["platform"] == "iOS"]
+          rt = rts[-1]
+          dt = [d for d in rt["supportedDeviceTypes"] if d["productFamily"] == "iPhone"][-1]
+          print(dt["identifier"], rt["identifier"])
+          ')
             echo "Creating simulator: $DEVTYPE on $RUNTIME"
             xcrun simctl create "CI iPhone" "$DEVTYPE" "$RUNTIME"
             LINE=$(find_sim)
           fi
+          xcodebuild -version
           echo "Using simulator: $LINE"
           UDID=$(echo "$LINE" | sed -E 's/.*id:([^,]+),.*/\1/')
           test -n "$UDID"
