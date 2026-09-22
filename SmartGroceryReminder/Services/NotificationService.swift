@@ -8,7 +8,12 @@ final class NotificationService: ObservableObject {
 
     private let center = UNUserNotificationCenter.current()
 
+    init() {
+        registerCategories()
+    }
+
     func requestAuthorization() async {
+        registerCategories()
         do {
             isAuthorized = try await center.requestAuthorization(options: [.alert, .sound, .badge])
         } catch {
@@ -20,7 +25,8 @@ final class NotificationService: ObservableObject {
     func scheduleHomeArrivalReminder(
         after delay: TimeInterval,
         itemCount: Int,
-        repeats: Bool
+        repeats: Bool,
+        repeatInterval: TimeInterval
     ) async {
         center.removePendingNotificationRequests(withIdentifiers: [
             NotificationID.carUnload,
@@ -45,7 +51,7 @@ final class NotificationService: ObservableObject {
             repeatContent.body = content.body
             repeatContent.sound = .default
             repeatContent.categoryIdentifier = NotificationCategory.carUnload
-            let repeatTrigger = UNTimeIntervalNotificationTrigger(timeInterval: max(delay + 300, 60), repeats: false)
+            let repeatTrigger = UNTimeIntervalNotificationTrigger(timeInterval: max(delay + repeatInterval, 60), repeats: false)
             let repeatRequest = UNNotificationRequest(
                 identifier: NotificationID.carUnloadRepeat,
                 content: repeatContent,
@@ -54,7 +60,6 @@ final class NotificationService: ObservableObject {
             try? await center.add(repeatRequest)
         }
 
-        registerCategories()
         await refreshPendingCount()
     }
 
@@ -69,7 +74,6 @@ final class NotificationService: ObservableObject {
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
         let request = UNNotificationRequest(identifier: NotificationID.storeVisit, content: content, trigger: trigger)
         try? await center.add(request)
-        registerCategories()
         await refreshPendingCount()
     }
 

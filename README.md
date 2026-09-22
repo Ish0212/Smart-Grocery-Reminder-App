@@ -18,7 +18,16 @@ SwiftUI prototype for location-aware grocery lists and home-arrival “unload th
 - iOS **17+** simulator or device
 - (Optional) Firebase project for production backend
 
-> This repo was scaffolded on Windows. Open it on a Mac to generate/build the Xcode project.
+> This repo was scaffolded on Windows. Builds and tests run in GitHub Actions (see below), so you don't need a Mac to verify changes.
+
+## Continuous integration
+
+Every push to `main` and every pull request runs [`.github/workflows/ios-ci.yml`](.github/workflows/ios-ci.yml) on a macOS runner:
+
+1. `xcodegen generate` from `project.yml` (the `.xcodeproj` is generated, not committed)
+2. `xcodebuild build test` on an available iPhone simulator
+
+If a run fails, open it under the repo's **Actions** tab to read the log, or download the `xcresult` artifact and open it in Xcode.
 
 ## Quick start (Mac)
 
@@ -38,6 +47,16 @@ open SmartGroceryReminder.xcodeproj
 3. Set the target’s Info.plist to `SmartGroceryReminder/Info.plist` (or merge the location usage strings)
 4. Build & run
 
+### Running tests
+
+```bash
+xcodegen generate
+xcodebuild -project SmartGroceryReminder.xcodeproj -scheme SmartGroceryReminder \
+  -destination 'platform=iOS Simulator,name=iPhone 16' test
+```
+
+Or press **⌘U** in Xcode.
+
 ### Demo login
 
 | Field | Value |
@@ -55,6 +74,8 @@ SmartGroceryReminder/
   Views/             # auth, list, arrival, places, settings
   Assets.xcassets
   Info.plist
+SmartGroceryReminderTests/  # XCTest unit tests
+.github/workflows/   # iOS CI
 docs/PLAN.md         # architecture & phased roadmap
 Config/GoogleService-Info.example.plist
 project.yml          # XcodeGen spec

@@ -1,0 +1,82 @@
+name: iOS CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ios-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      # Use the runner's default Xcode: it ships with simulator runtimes and devices preinstalled.
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate --spec project.yml
+
+      - name: Pick an eligible iPhone simulator
+        id: sim
+        run: |
+          # -showdestinations lists only simulators this Xcode can run the scheme on.
+          find_sim() {
+            xcodebuild -showdestinations -project SmartGroceryReminder.xcodeproj -scheme SmartGroceryReminder 2>&1 \
+              | tee /dev/stderr | grep -m1 'platform:iOS Simulator.*name:iPhone' || true
+          }
+          # The runner's default Xcode may not match the installed simulator runtimes,
+          # so try each installed Xcode (newest first) until one lists an iPhone simulator.
+          LINE=""
+          for XC in $(ls -d /Applications/Xcode_*.app | sort -rV); do
+            sudo xcode-select -s "$XC"
+            echo "Trying $XC"
+            LINE=$(find_sim)
+            [ -n "$LINE" ] && break
+          done
+          if [ -z "$LINE" ]; then
+            # Runtime present but no devices: create one using a device type the newest iOS runtime supports.
+            read -r DEVTYPE RUNTIME < <(xcrun simctl list runtimes available -j | python3 -c '
+          import json, sys
+          rts = [r for r in json.load(sys.stdin)["runtimes"] if r["platform"] == "iOS"]
+          rt = rts[-1]
+          dt = [d for d in rt["supportedDeviceTypes"] if d["productFamily"] == "iPhone"][-1]
+          print(dt["identifier"], rt["identifier"])
+          ')
+            echo "Creating simulator: $DEVTYPE on $RUNTIME"
+            xcrun simctl create "CI iPhone" "$DEVTYPE" "$RUNTIME"
+            LINE=$(find_sim)
+          fi
+          xcodebuild -version
+          echo "Using simulator: $LINE"
+          UDID=$(echo "$LINE" | sed -E 's/.*id:([^,]+),.*/\1/')
+          test -n "$UDID"
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+
+      - name: Build and test
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project SmartGroceryReminder.xcodeproj \
+            -scheme SmartGroceryReminder \
+            -destination "id=${{ steps.sim.outputs.udid }}" \
+            -resultBundlePath build/Results.xcresult \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" \
+            build test
+
+      - name: Upload result bundle
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcresult
+          path: build/Results.xcresult

@@ -15,15 +15,18 @@ An iOS app that keeps grocery lists handy and uses location to remind you:
 | Auth screens + mock sign-in | Done (`demo@grocery.app` / `demo123`) |
 | Home-arrival timer + presets | Done |
 | Core Location geofencing service | Done (plus simulate buttons) |
-| Local notifications + actions | Done |
+| Local notifications + actions | Done (**All brought in** / **Remind again** handled via `AppDelegate`) |
+| Reminder preferences (store toggle, repeat interval) | Done |
 | Firebase Auth / Firestore | Stubbed interfaces ready to wire |
 | Accessibility labels / Dynamic Type friendly layout | Baseline done |
+| Unit tests (XCTest) | Done (services + reminder policy) |
+| CI (GitHub Actions, macOS) | Done (`xcodegen` + `xcodebuild build test`) |
 
 ## Architecture
 
 ```
 Views (SwiftUI)
-  └── AppState (ObservableObject orchestration)
+  └── AppState (ObservableObject orchestration, owned by AppDelegate)
         ├── AuthService (Mock | Firebase)
         ├── ShoppingListService (Mock | Firestore)
         ├── LocationService (Core Location geofences)

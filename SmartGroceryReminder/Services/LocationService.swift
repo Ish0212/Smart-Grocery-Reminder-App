@@ -58,15 +58,23 @@ final class LocationService: NSObject, ObservableObject {
         storeRegionIds.removeAll()
     }
 
+    /// Called by AppState once it has reacted to a home-arrival event, so the flag reflects current state.
+    func consumeHomeArrival() {
+        didArriveHome = false
+    }
+
+    /// Called by AppState once it has reacted to a store-entry event.
+    func consumeStoreEntry() {
+        didEnterGroceryStore = false
+    }
+
     /// Simulator / preview helper to exercise home-arrival flow without leaving the desk.
     func simulateArriveHome() {
-        didArriveHome = false
         didArriveHome = true
         lastEventDescription = "Simulated: arrived home"
     }
 
     func simulateEnterStore(named name: String = "Grocery store") {
-        didEnterGroceryStore = false
         didEnterGroceryStore = true
         lastEventDescription = "Simulated: entered \(name)"
     }
