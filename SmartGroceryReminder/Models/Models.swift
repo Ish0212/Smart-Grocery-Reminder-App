@@ -104,10 +104,10 @@ struct UserPreferences: Codable, Equatable {
 
 enum SampleData {
     static let groceryItems: [GroceryItem] = [
-        GroceryItem(title: "Milk", aisle: "Dairy", notes: "2% gallon"),
+        GroceryItem(title: "Milk", notes: "2% gallon", aisle: "Dairy"),
         GroceryItem(title: "Sourdough bread", aisle: "Bakery"),
         GroceryItem(title: "Bananas", aisle: "Produce"),
-        GroceryItem(title: "Eggs", aisle: "Dairy", notes: "Cage-free dozen", isCompleted: true),
+        GroceryItem(title: "Eggs", notes: "Cage-free dozen", aisle: "Dairy", isCompleted: true),
         GroceryItem(title: "Coffee beans", aisle: "Beverages")
     ]
 }

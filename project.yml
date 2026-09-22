@@ -6,8 +6,8 @@ options:
   xcodeVersion: "15.0"
   createIntermediateGroups: true
 settings:
-  BASE_SDK: iphoneos
   TARGETED_DEVICE_FAMILY: "1"
+  SWIFT_VERSION: "5.0"
 targets:
   SmartGroceryReminder:
     type: application
@@ -18,6 +18,19 @@ targets:
       PRODUCT_BUNDLE_IDENTIFIER: com.smartgrocery.reminder
       INFOPLIST_FILE: SmartGroceryReminder/Info.plist
       GENERATE_INFOPLIST_FILE: false
-      SWIFT_VERSION: "5.0"
       TARGETED_DEVICE_FAMILY: "1"
       IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+    scheme:
+      testTargets:
+        - SmartGroceryReminderTests
+      gatherCoverageData: true
+  SmartGroceryReminderTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: SmartGroceryReminderTests
+    dependencies:
+      - target: SmartGroceryReminder
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.smartgrocery.reminder.tests
+      GENERATE_INFOPLIST_FILE: true

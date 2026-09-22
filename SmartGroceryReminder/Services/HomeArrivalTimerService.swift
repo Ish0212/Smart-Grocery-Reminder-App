@@ -26,7 +26,7 @@ final class HomeArrivalTimerService: ObservableObject {
 
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                self?.tick()
+                self?.refresh()
             }
         }
     }
@@ -43,9 +43,11 @@ final class HomeArrivalTimerService: ObservableObject {
         cancel()
     }
 
-    private func tick() {
+    /// Recomputes the countdown from `endDate`. Also called when the app returns to the
+    /// foreground, since the Timer does not fire while suspended.
+    func refresh(now: Date = Date()) {
         guard let endDate else { return }
-        let remaining = Int(endDate.timeIntervalSinceNow)
+        let remaining = Int(endDate.timeIntervalSince(now))
         if remaining <= 0 {
             remainingSeconds = 0
             isActive = false

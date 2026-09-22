@@ -15,6 +15,11 @@ struct LocationsView: View {
                     Text(locationService.lastEventDescription)
                         .font(.footnote)
                         .foregroundStyle(.secondary)
+                    if locationService.authorizationStatus == .notDetermined {
+                        Button("Request location access") {
+                            locationService.requestAuthorization()
+                        }
+                    }
                 }
 
                 Section("Home") {
@@ -76,13 +81,6 @@ struct LocationsView: View {
                 }
             }
             .navigationTitle("Places")
-            .onAppear {
-                locationService.requestAuthorization()
-                locationService.startMonitoring(
-                    home: appState.preferences.homeLocation,
-                    stores: appState.preferences.savedStores
-                )
-            }
         }
     }
 

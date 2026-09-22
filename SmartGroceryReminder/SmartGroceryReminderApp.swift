@@ -2,7 +2,8 @@ import SwiftUI
 
 @main
 struct SmartGroceryReminderApp: App {
-    @StateObject private var appState = AppState()
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var delegate
+    @Environment(\.scenePhase) private var scenePhase
 
     init() {
         FirebaseBootstrap.configureIfAvailable()
@@ -11,10 +12,15 @@ struct SmartGroceryReminderApp: App {
     var body: some Scene {
         WindowGroup {
             RootView()
-                .environmentObject(appState)
-                .environmentObject(appState.locationService)
-                .environmentObject(appState.notificationService)
-                .environmentObject(appState.homeArrivalTimer)
+                .environmentObject(delegate.appState)
+                .environmentObject(delegate.appState.locationService)
+                .environmentObject(delegate.appState.notificationService)
+                .environmentObject(delegate.appState.homeArrivalTimer)
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active {
+                delegate.appState.homeArrivalTimer.refresh()
+            }
         }
     }
 }

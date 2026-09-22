@@ -82,15 +82,8 @@ struct HomeArrivalView: View {
     private var actions: some View {
         VStack(spacing: 12) {
             Button {
+                // AppState observes this flag and starts the timer + schedules the reminder.
                 locationService.simulateArriveHome()
-                timer.start(duration: appState.preferences.homeArrivalDelay)
-                Task {
-                    await appState.notificationService.scheduleHomeArrivalReminder(
-                        after: appState.preferences.homeArrivalDelay,
-                        itemCount: appState.shoppingList.filter { !$0.isCompleted }.count,
-                        repeats: appState.preferences.repeatCarUnloadReminder
-                    )
-                }
             } label: {
                 Label("Simulate arrive home", systemImage: "location.fill")
                     .frame(maxWidth: .infinity)

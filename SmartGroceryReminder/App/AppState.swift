@@ -47,6 +47,7 @@ final class AppState: ObservableObject {
             .sink { [weak self] arrived in
                 guard let self, arrived else { return }
                 self.homeArrivalTimer.start(duration: self.preferences.homeArrivalDelay)
+                self.locationService.consumeHomeArrival()
             }
             .store(in: &cancellables)
 
@@ -54,13 +55,52 @@ final class AppState: ObservableObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] entered in
                 guard let self, entered else { return }
+                let openCount = self.shoppingList.filter { !$0.isCompleted }.count
+                self.locationService.consumeStoreEntry()
+                guard Self.shouldSendStoreReminder(preferences: self.preferences, openItemCount: openCount) else { return }
                 Task {
-                    await self.notificationService.sendGroceryStoreReminder(
-                        itemCount: self.shoppingList.filter { !$0.isCompleted }.count
-                    )
+                    await self.notificationService.sendGroceryStoreReminder(itemCount: openCount)
                 }
             }
             .store(in: &cancellables)
+    }
+
+    // MARK: - Reminder policy
+
+    static func shouldSendStoreReminder(preferences: UserPreferences, openItemCount: Int) -> Bool {
+        preferences.storeEntryReminderEnabled && openItemCount > 0
+    }
+
+    /// Returns nil when there is nothing left to unload.
+    static func carUnloadReminderPlan(
+        preferences: UserPreferences,
+        items: [GroceryItem]
+    ) -> (itemCount: Int, repeats: Bool, repeatInterval: TimeInterval)? {
+        let openCount = items.filter { !$0.isCompleted }.count
+        guard openCount > 0 else { return nil }
+        return (openCount, preferences.repeatCarUnloadReminder, preferences.carUnloadRepeatInterval)
+    }
+
+    // MARK: - Notification actions
+
+    func handleNotificationAction(_ actionIdentifier: String, category: String) async {
+        guard category == NotificationCategory.carUnload else { return }
+        switch actionIdentifier {
+        case NotificationAction.markDone:
+            homeArrivalTimer.completeUnload()
+            notificationService.markCarUnloadComplete()
+        case NotificationAction.snooze:
+            let openCount = shoppingList.filter { !$0.isCompleted }.count
+            guard openCount > 0 else { return }
+            await notificationService.scheduleHomeArrivalReminder(
+                after: preferences.carUnloadRepeatInterval,
+                itemCount: openCount,
+                repeats: false,
+                repeatInterval: 0
+            )
+        default:
+            break
+        }
     }
 
     func signIn(email: String, password: String) async throws {
@@ -82,6 +122,7 @@ final class AppState: ObservableObject {
         shoppingList = []
         await notificationService.requestAuthorization()
         locationService.requestAuthorization()
+        locationService.startMonitoring(home: preferences.homeLocation, stores: preferences.savedStores)
     }
 
     func signOut() {
@@ -124,12 +165,12 @@ final class AppState: ObservableObject {
     }
 
     private func scheduleCarUnloadReminderIfNeeded() async {
-        let incomplete = shoppingList.filter { !$0.isCompleted }
-        guard !incomplete.isEmpty else { return }
+        guard let plan = Self.carUnloadReminderPlan(preferences: preferences, items: shoppingList) else { return }
         await notificationService.scheduleHomeArrivalReminder(
             after: preferences.homeArrivalDelay,
-            itemCount: incomplete.count,
-            repeats: preferences.repeatCarUnloadReminder
+            itemCount: plan.itemCount,
+            repeats: plan.repeats,
+            repeatInterval: plan.repeatInterval
         )
     }
 }
