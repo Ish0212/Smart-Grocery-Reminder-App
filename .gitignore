@@ -1,0 +1,47 @@
+# Xcode
+build/
+DerivedData/
+*.xcuserstate
+*.xcuserdata/
+*.xccheckout
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+timeline.xctimeline
+playground.xcworkspace
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Packages/
+Package.resolved
+*.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/
+
+# CocoaPods / Carthage
+Pods/
+Carthage/Build/
+
+# Firebase / secrets
+GoogleService-Info.plist
+*.plist.backup
+.env
+.env.*
+Secrets.xcconfig
+Config/Secrets.swift
+
+# macOS
+.DS_Store
+**/.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+
+# IDEs
+.idea/
+*.swp
+*~
+
+# Archives
+*.xcarchive

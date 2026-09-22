@@ -1,0 +1,23 @@
+name: SmartGroceryReminder
+options:
+  bundleIdPrefix: com.smartgrocery
+  deploymentTarget:
+    iOS: "17.0"
+  xcodeVersion: "15.0"
+  createIntermediateGroups: true
+settings:
+  BASE_SDK: iphoneos
+  TARGETED_DEVICE_FAMILY: "1"
+targets:
+  SmartGroceryReminder:
+    type: application
+    platform: iOS
+    sources:
+      - path: SmartGroceryReminder
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.smartgrocery.reminder
+      INFOPLIST_FILE: SmartGroceryReminder/Info.plist
+      GENERATE_INFOPLIST_FILE: false
+      SWIFT_VERSION: "5.0"
+      TARGETED_DEVICE_FAMILY: "1"
+      IPHONEOS_DEPLOYMENT_TARGET: "17.0"
