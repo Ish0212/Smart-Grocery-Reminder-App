@@ -33,7 +33,13 @@ struct LocationEvent: Equatable {
 @MainActor
 final class LocationService: NSObject, ObservableObject {
     @Published var authorizationStatus: CLAuthorizationStatus = .notDetermined
+    /// Geofences don't work with approximate location.
+    @Published private(set) var accuracyAuthorization: CLAccuracyAuthorization = .fullAccuracy
     @Published var currentLocation: CLLocationCoordinate2D?
+    /// How many regions iOS itself reports as monitored.
+    @Published private(set) var systemRegionCount = 0
+    /// Inside / outside per region identifier, as last reported by iOS.
+    @Published private(set) var regionStates: [String: CLRegionState] = [:]
     /// Names of the places being monitored, for display.
     @Published var monitoredRegions: [String] = []
     @Published var lastEventDescription: String = "Idle"
@@ -50,11 +56,31 @@ final class LocationService: NSObject, ObservableObject {
         manager.delegate = self
         manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
         authorizationStatus = manager.authorizationStatus
+        accuracyAuthorization = manager.accuracyAuthorization
+        systemRegionCount = manager.monitoredRegions.count
     }
 
     func requestAuthorization() {
         manager.requestAlwaysAuthorization()
-        manager.startUpdatingLocation()
+    }
+
+    /// A single location fix, for "use current location" and nearby search. Geofences don't need
+    /// continuous GPS, so nothing keeps location updates running.
+    func requestCurrentLocation() {
+        switch manager.authorizationStatus {
+        case .authorizedAlways, .authorizedWhenInUse:
+            manager.requestLocation()
+        default:
+            break
+        }
+    }
+
+    /// Asks iOS whether the phone is inside each monitored region (answers arrive in regionStates).
+    func refreshRegionStates() {
+        systemRegionCount = manager.monitoredRegions.count
+        for region in manager.monitoredRegions {
+            manager.requestState(for: region)
+        }
     }
 
     /// Makes iOS monitor exactly these places. Only the difference is applied, so regions iOS is
@@ -78,6 +104,8 @@ final class LocationService: NSObject, ObservableObject {
         }
 
         monitoredRegions = places.map(\.name)
+        systemRegionCount = manager.monitoredRegions.count
+        regionStates = regionStates.filter { desired[$0.key] != nil }
         lastEventDescription = places.isEmpty ? "No geofences configured" : "Monitoring \(places.count) place(s)"
         if !diff.start.isEmpty || !diff.stop.isEmpty {
             diagnostics.record(.monitoring, "Geofences updated: \(diff.start.count) added, \(diff.stop.count) removed, \(places.count) total")
@@ -94,6 +122,8 @@ final class LocationService: NSObject, ObservableObject {
             manager.stopMonitoring(for: region)
         }
         monitoredRegions.removeAll()
+        regionStates.removeAll()
+        systemRegionCount = 0
     }
 
     /// Classifies a region event from its identifier alone, so it also works right after iOS
@@ -129,6 +159,31 @@ final class LocationService: NSObject, ObservableObject {
         events.send(LocationEvent(kind: .groceryStore, transition: .enter, placeId: "simulated", date: Date(), isSimulated: true))
     }
 
+    static func describe(regionIdentifier identifier: String) -> String {
+        guard let parsed = RegionID.parse(identifier) else { return identifier }
+        return parsed.kind == .home ? "Home" : "Grocery store"
+    }
+
+    static func describe(_ state: CLRegionState) -> String {
+        switch state {
+        case .inside: return "inside"
+        case .outside: return "outside"
+        case .unknown: return "unknown"
+        @unknown default: return "unknown"
+        }
+    }
+
+    static func describe(_ status: CLAuthorizationStatus) -> String {
+        switch status {
+        case .authorizedAlways: return "Always"
+        case .authorizedWhenInUse: return "While Using"
+        case .denied: return "Denied"
+        case .restricted: return "Restricted"
+        case .notDetermined: return "Not determined"
+        @unknown default: return "Unknown"
+        }
+    }
+
     private func makeRegion(for place: GeoPlace, identifier: String) -> CLCircularRegion {
         let center = CLLocationCoordinate2D(latitude: place.latitude, longitude: place.longitude)
         let region = CLCircularRegion(center: center, radius: place.radiusMeters, identifier: identifier)
@@ -140,8 +195,54 @@ final class LocationService: NSObject, ObservableObject {
 
 extension LocationService: CLLocationManagerDelegate {
     nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        let status = manager.authorizationStatus
+        let accuracy = manager.accuracyAuthorization
         Task { @MainActor in
-            self.authorizationStatus = manager.authorizationStatus
+            guard status != self.authorizationStatus || accuracy != self.accuracyAuthorization else { return }
+            self.authorizationStatus = status
+            self.accuracyAuthorization = accuracy
+            self.diagnostics.record(
+                .permission,
+                "Location access: \(Self.describe(status)), \(accuracy == .fullAccuracy ? "precise" : "approximate")"
+            )
+        }
+    }
+
+    nonisolated func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        // Required by requestLocation(). Transient "location unknown" errors are expected indoors.
+        let message = error.localizedDescription
+        Task { @MainActor in
+            self.diagnostics.record(.error, "Location fix failed: \(message)")
+        }
+    }
+
+    nonisolated func locationManager(_ manager: CLLocationManager, monitoringDidFailFor region: CLRegion?, withError error: Error) {
+        let identifier = region?.identifier ?? "a region"
+        let message = error.localizedDescription
+        Task { @MainActor in
+            self.diagnostics.record(.error, "Couldn't monitor \(Self.describe(regionIdentifier: identifier)): \(message)")
+        }
+    }
+
+    nonisolated func locationManager(_ manager: CLLocationManager, didStartMonitoringFor region: CLRegion) {
+        manager.requestState(for: region)
+        let count = manager.monitoredRegions.count
+        Task { @MainActor in
+            self.systemRegionCount = count
+        }
+    }
+
+    nonisolated func locationManager(_ manager: CLLocationManager, didDetermineState state: CLRegionState, for region: CLRegion) {
+        // Also reported alongside every enter/exit; only the state is recorded, never an event.
+        let identifier = region.identifier
+        Task { @MainActor in
+            guard self.regionStates[identifier] != state else { return }
+            self.regionStates[identifier] = state
+            self.diagnostics.record(
+                .regionState,
+                "\(Self.describe(regionIdentifier: identifier)): \(Self.describe(state))",
+                placeId: RegionID.parse(identifier)?.placeId
+            )
         }
     }
 
