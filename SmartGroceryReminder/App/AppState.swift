@@ -231,6 +231,31 @@ final class AppState: ObservableObject {
         }
     }
 
+    // MARK: - Places
+
+    /// iOS monitors at most 20 regions per app; one is kept for home.
+    static let maxStores = 19
+
+    enum AddStoreResult: Equatable {
+        case added, duplicate, limitReached
+    }
+
+    /// Adds a store unless one is already saved within 50 m or the geofence limit is reached.
+    func addStore(_ store: GeoPlace) async -> AddStoreResult {
+        if preferences.savedStores.contains(where: { $0.distance(to: store) < 50 }) {
+            return .duplicate
+        }
+        guard preferences.savedStores.count < Self.maxStores else { return .limitReached }
+        preferences.savedStores.append(store)
+        await savePreferences()
+        return .added
+    }
+
+    func setHome(_ home: GeoPlace) async {
+        preferences.homeLocation = home
+        await savePreferences()
+    }
+
     func savePreferences() async {
         guard preferencesLoaded, let userId = currentUser?.id else { return }
         try? await listService.savePreferences(preferences, userId: userId)

@@ -5,6 +5,8 @@ struct LocationsView: View {
     @EnvironmentObject private var appState: AppState
     @EnvironmentObject private var locationService: LocationService
     @State private var cameraPosition: MapCameraPosition = .automatic
+    @State private var searchKind: GeoPlace.PlaceKind?
+    @State private var placeMessage: String?
 
     var body: some View {
         NavigationStack {
@@ -25,18 +27,17 @@ struct LocationsView: View {
                 Section("Home") {
                     if let home = appState.preferences.homeLocation {
                         placeRow(home)
-                        Button("Use current location as home") {
-                            setHomeFromCurrent()
-                        }
-                        .disabled(locationService.currentLocation == nil)
-                    } else {
-                        Button("Set home from current location") {
-                            setHomeFromCurrent()
-                        }
                     }
+                    Button("Search for home address") {
+                        searchKind = .home
+                    }
+                    Button(appState.preferences.homeLocation == nil ? "Set home from current location" : "Use current location as home") {
+                        setHomeFromCurrent()
+                    }
+                    .disabled(locationService.currentLocation == nil)
                 }
 
-                Section("Grocery stores") {
+                Section {
                     ForEach(appState.preferences.savedStores) { store in
                         placeRow(store)
                     }
@@ -45,21 +46,27 @@ struct LocationsView: View {
                         Task { await appState.savePreferences() }
                     }
 
+                    Button("Search for a store") {
+                        searchKind = .groceryStore
+                    }
+
                     Button("Add demo store near SF") {
-                        let store = GeoPlace(
+                        addPlace(GeoPlace(
                             name: "Fresh Mart",
                             latitude: 37.7810,
                             longitude: -122.4110,
                             radiusMeters: 180,
                             kind: .groceryStore
-                        )
-                        appState.preferences.savedStores.append(store)
-                        Task { await appState.savePreferences() }
+                        ))
                     }
 
                     Button("Simulate entering a store") {
                         locationService.simulateEnterStore()
                     }
+                } header: {
+                    Text("Grocery stores")
+                } footer: {
+                    Text("\(appState.preferences.savedStores.count) of \(AppState.maxStores) stores. iOS can watch up to 20 places per app, including home.")
                 }
 
                 Section("Map preview") {
@@ -81,6 +88,45 @@ struct LocationsView: View {
                 }
             }
             .navigationTitle("Places")
+            .sheet(item: $searchKind) { kind in
+                PlaceSearchView(kind: kind, near: searchCenter) { place in
+                    addPlace(place)
+                }
+            }
+            .alert(
+                "Couldn't add store",
+                isPresented: Binding(get: { placeMessage != nil }, set: { if !$0 { placeMessage = nil } }),
+                presenting: placeMessage
+            ) { _ in
+                Button("OK", role: .cancel) {}
+            } message: { message in
+                Text(message)
+            }
+        }
+    }
+
+    /// Search near the user, or near home when the current location is unknown.
+    private var searchCenter: CLLocationCoordinate2D? {
+        if let current = locationService.currentLocation { return current }
+        guard let home = appState.preferences.homeLocation else { return nil }
+        return CLLocationCoordinate2D(latitude: home.latitude, longitude: home.longitude)
+    }
+
+    private func addPlace(_ place: GeoPlace) {
+        Task {
+            switch place.kind {
+            case .home:
+                await appState.setHome(place)
+            case .groceryStore:
+                switch await appState.addStore(place) {
+                case .added:
+                    break
+                case .duplicate:
+                    placeMessage = "\(place.name) is already one of your stores."
+                case .limitReached:
+                    placeMessage = "You can save up to \(AppState.maxStores) stores. Remove one to add another."
+                }
+            }
         }
     }
 
@@ -107,15 +153,18 @@ struct LocationsView: View {
 
     private func setHomeFromCurrent() {
         guard let coordinate = locationService.currentLocation else { return }
-        appState.preferences.homeLocation = GeoPlace(
+        addPlace(GeoPlace(
             name: "Home",
             latitude: coordinate.latitude,
             longitude: coordinate.longitude,
             radiusMeters: 120,
             kind: .home
-        )
-        Task { await appState.savePreferences() }
+        ))
     }
+}
+
+extension GeoPlace.PlaceKind: Identifiable {
+    var id: String { rawValue }
 }
 
 #Preview {

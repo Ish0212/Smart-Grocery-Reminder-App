@@ -1,4 +1,5 @@
 import Foundation
+import CoreLocation
 
 struct AppUser: Identifiable, Codable, Equatable {
     let id: String
@@ -61,6 +62,14 @@ struct GeoPlace: Identifiable, Codable, Equatable, Hashable {
         self.longitude = longitude
         self.radiusMeters = radiusMeters
         self.kind = kind
+    }
+}
+
+extension GeoPlace {
+    /// Straight-line distance in meters.
+    func distance(to other: GeoPlace) -> CLLocationDistance {
+        CLLocation(latitude: latitude, longitude: longitude)
+            .distance(from: CLLocation(latitude: other.latitude, longitude: other.longitude))
     }
 }
 
