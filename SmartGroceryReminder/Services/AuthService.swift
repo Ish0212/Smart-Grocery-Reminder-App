@@ -28,18 +28,19 @@ final class MockAuthService: AuthServiceProtocol {
     }
 
     func signOut() {}
+
+    /// Mock sessions live only in memory, so there is never one to restore.
+    func restoreSession(_ onRestore: @escaping (AppUser) -> Void) {}
 }
 
 /// Firebase Auth (email + password). Used when GoogleService-Info.plist is bundled.
 final class FirebaseAuthService: AuthServiceProtocol {
+    private var restoreListener: NSObjectProtocol?
+
     func signIn(email: String, password: String) async throws -> AppUser {
         do {
             let result = try await Auth.auth().signIn(withEmail: email, password: password)
-            return AppUser(
-                id: result.user.uid,
-                email: result.user.email ?? email,
-                displayName: result.user.displayName ?? ""
-            )
+            return AppUser(firebaseUser: result.user)
         } catch {
             throw Self.mapError(error)
         }
@@ -61,6 +62,23 @@ final class FirebaseAuthService: AuthServiceProtocol {
         try? Auth.auth().signOut()
     }
 
+    /// Firebase keeps users signed in across launches. If the app launched while the device was
+    /// locked (e.g. woken by a geofence), Firebase only loads the saved user after unlock, so wait for it.
+    func restoreSession(_ onRestore: @escaping (AppUser) -> Void) {
+        if let user = Auth.auth().currentUser {
+            onRestore(AppUser(firebaseUser: user))
+            return
+        }
+        restoreListener = Auth.auth().addStateDidChangeListener { [weak self] auth, user in
+            guard let user else { return }
+            if let listener = self?.restoreListener {
+                auth.removeStateDidChangeListener(listener)
+                self?.restoreListener = nil
+            }
+            onRestore(AppUser(firebaseUser: user))
+        }
+    }
+
     /// Maps Firebase Auth errors onto the app's messages; anything else (e.g. network) passes through.
     static func mapError(_ error: Error) -> Error {
         let nsError = error as NSError
@@ -73,5 +91,11 @@ final class FirebaseAuthService: AuthServiceProtocol {
         case .invalidEmail: return AuthError.invalidEmail
         default: return error
         }
+    }
+}
+
+private extension AppUser {
+    init(firebaseUser user: User) {
+        self.init(id: user.uid, email: user.email ?? "", displayName: user.displayName ?? "")
     }
 }

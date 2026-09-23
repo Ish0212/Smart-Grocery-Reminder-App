@@ -97,7 +97,7 @@ To use a real Firebase project:
 4. Download `GoogleService-Info.plist` to `SmartGroceryReminder/GoogleService-Info.plist` (gitignored), then run `xcodegen generate`
 5. Deploy the security rules: `firebase deploy --only firestore:rules` (with the [Firebase CLI](https://firebase.google.com/docs/cli)), or paste `firestore.rules` into the console's **Rules** tab
 
-Data is stored under `users/{uid}`: `items/{itemId}` for list items and `preferences/main` for reminder settings. The rules only let a signed-in user read and write their own tree.
+With Firebase, users stay signed in across launches. Data is stored under `users/{uid}`: `items/{itemId}` for list items and `preferences/main` for reminder settings. The rules only let a signed-in user read and write their own tree.
 
 See [docs/PLAN.md](docs/PLAN.md) for data shape, geofence flow, and privacy notes.
 

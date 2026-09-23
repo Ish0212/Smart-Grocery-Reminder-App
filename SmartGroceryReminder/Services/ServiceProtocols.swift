@@ -21,6 +21,8 @@ protocol AuthServiceProtocol {
     func signIn(email: String, password: String) async throws -> AppUser
     func signUp(email: String, password: String, displayName: String) async throws -> AppUser
     func signOut()
+    /// Calls `onRestore` on the main thread with a user still signed in from a previous launch, if any.
+    func restoreSession(_ onRestore: @escaping (AppUser) -> Void)
 }
 
 protocol ShoppingListServiceProtocol {

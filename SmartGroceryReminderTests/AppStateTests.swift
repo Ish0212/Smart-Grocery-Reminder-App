@@ -74,6 +74,15 @@ final class AppStateTests: XCTestCase {
         XCTAssertFalse(state.homeArrivalTimer.isActive)
     }
 
+    @MainActor
+    func testRestoreSessionWithMockBackendStaysSignedOut() async {
+        let state = AppState()
+        state.restoreSession()
+
+        XCTAssertFalse(state.isAuthenticated)
+        XCTAssertNil(state.currentUser)
+    }
+
     func testDefaultPreferencesCodableRoundTrip() throws {
         let data = try JSONEncoder().encode(UserPreferences.default)
         let decoded = try JSONDecoder().decode(UserPreferences.self, from: data)

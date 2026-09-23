@@ -67,7 +67,8 @@ users/{uid}                  (profile: email + displayName live in Firebase Auth
 - `FirebaseBootstrap` configures Firebase when `GoogleService-Info.plist` is bundled; `AppDelegate` then builds `AppState` with the Firebase services
 - `FirebaseAuthService` (sign in / sign up / sign out, errors mapped to app messages) and `FirestoreShoppingListService` (items + preferences, offline-first writes)
 - Security rules in `firestore.rules`: users can only read/write their own `users/{uid}` tree
-- Follow-ups: restore the Firebase session at launch (`Auth.auth().currentUser`) instead of showing sign-in every time; rules unit tests with the Firebase emulator
+- Signed-in users stay signed in across launches (`AppState.restoreSession()` at launch; waits for Firebase if the device was locked)
+- Follow-ups: rules unit tests with the Firebase emulator; make background geofence wakeups wait for the list to load before scheduling reminders
 
 ### Phase 2 — Polish
 - MapKit search for store addresses
