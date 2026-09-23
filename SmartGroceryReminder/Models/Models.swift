@@ -85,7 +85,9 @@ struct UserPreferences: Codable, Equatable {
     var carUnloadRepeatInterval: TimeInterval
 
     static let `default` = UserPreferences(
+        // Fixed IDs: geofence identifiers are built from place IDs and must stay the same across launches.
         homeLocation: GeoPlace(
+            id: "default-home",
             name: "Home",
             latitude: 37.7749,
             longitude: -122.4194,
@@ -94,6 +96,7 @@ struct UserPreferences: Codable, Equatable {
         ),
         savedStores: [
             GeoPlace(
+                id: "default-store",
                 name: "Neighborhood Market",
                 latitude: 37.7849,
                 longitude: -122.4094,

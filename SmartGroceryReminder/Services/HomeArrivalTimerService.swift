@@ -17,12 +17,15 @@ final class HomeArrivalTimerService: ObservableObject {
         ("30 min", 30 * 60)
     ]
 
-    func start(duration: TimeInterval) {
+    /// - Parameter startedAt: when the countdown began (the arrival), which can be earlier than now
+    ///   when the arrival is handled late, e.g. after iOS relaunched the app.
+    func start(duration: TimeInterval, startedAt: Date = Date()) {
         cancel()
         selectedDelay = duration
-        remainingSeconds = Int(duration)
-        endDate = Date().addingTimeInterval(duration)
+        endDate = startedAt.addingTimeInterval(duration)
         isActive = true
+        refresh()
+        guard isActive else { return }
 
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor in
@@ -47,7 +50,7 @@ final class HomeArrivalTimerService: ObservableObject {
     /// foreground, since the Timer does not fire while suspended.
     func refresh(now: Date = Date()) {
         guard let endDate else { return }
-        let remaining = Int(endDate.timeIntervalSince(now))
+        let remaining = Int(endDate.timeIntervalSince(now).rounded())
         if remaining <= 0 {
             remainingSeconds = 0
             isActive = false

@@ -12,11 +12,14 @@ struct LocationsView: View {
         NavigationStack {
             List {
                 Section("Status") {
-                    LabeledContent("Location access", value: authLabel)
+                    LabeledContent("Location access", value: LocationService.describe(locationService.authorizationStatus))
                     LabeledContent("Monitoring", value: locationService.monitoredRegions.isEmpty ? "Off" : locationService.monitoredRegions.joined(separator: ", "))
                     Text(locationService.lastEventDescription)
                         .font(.footnote)
                         .foregroundStyle(.secondary)
+                    NavigationLink("Diagnostics") {
+                        DiagnosticsView(diagnostics: appState.diagnostics)
+                    }
                     if locationService.authorizationStatus == .notDetermined {
                         Button("Request location access") {
                             locationService.requestAuthorization()
@@ -88,6 +91,11 @@ struct LocationsView: View {
                 }
             }
             .navigationTitle("Places")
+            // One fix for "use current location" and nearby search, and again once access is granted.
+            .task { locationService.requestCurrentLocation() }
+            .onChange(of: locationService.authorizationStatus) { _, _ in
+                locationService.requestCurrentLocation()
+            }
             .sheet(item: $searchKind) { kind in
                 PlaceSearchView(kind: kind, near: searchCenter) { place in
                     addPlace(place)
@@ -127,17 +135,6 @@ struct LocationsView: View {
                     placeMessage = "You can save up to \(AppState.maxStores) stores. Remove one to add another."
                 }
             }
-        }
-    }
-
-    private var authLabel: String {
-        switch locationService.authorizationStatus {
-        case .authorizedAlways: return "Always"
-        case .authorizedWhenInUse: return "While Using"
-        case .denied: return "Denied"
-        case .restricted: return "Restricted"
-        case .notDetermined: return "Not determined"
-        @unknown default: return "Unknown"
         }
     }
 

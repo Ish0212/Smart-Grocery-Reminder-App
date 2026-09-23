@@ -34,11 +34,21 @@ struct SettingsView: View {
                 }
 
                 Section("Notifications") {
-                    LabeledContent("Permission", value: notificationService.isAuthorized ? "Granted" : "Not granted")
+                    LabeledContent("Permission", value: notificationService.authorizationStatus == .authorized ? "Granted" : "Not granted")
                     LabeledContent("Pending", value: "\(notificationService.pendingCount)")
                     Button("Request notification access") {
                         Task { await notificationService.requestAuthorization() }
                     }
+                }
+
+                Section {
+                    NavigationLink("Diagnostics") {
+                        DiagnosticsView(diagnostics: appState.diagnostics)
+                    }
+                } header: {
+                    Text("Troubleshooting")
+                } footer: {
+                    Text("Reminder health checklist and a log of location and reminder events.")
                 }
 
                 Section("About") {
@@ -48,6 +58,7 @@ struct SettingsView: View {
                 }
             }
             .navigationTitle("Settings")
+            .task { await notificationService.refreshAuthorizationStatus() }
             .onChange(of: appState.preferences) { _, _ in
                 Task { await appState.savePreferences() }
             }

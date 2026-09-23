@@ -82,7 +82,7 @@ struct HomeArrivalView: View {
     private var actions: some View {
         VStack(spacing: 12) {
             Button {
-                // AppState observes this flag and starts the timer + schedules the reminder.
+                // AppState handles it like a real arrival: timer + reminder.
                 locationService.simulateArriveHome()
             } label: {
                 Label("Simulate arrive home", systemImage: "location.fill")
@@ -94,8 +94,7 @@ struct HomeArrivalView: View {
 
             if timer.isActive {
                 Button(role: .destructive) {
-                    timer.completeUnload()
-                    appState.notificationService.markCarUnloadComplete()
+                    appState.markUnloadComplete(source: "app")
                 } label: {
                     Label("Mark groceries brought in", systemImage: "checkmark.circle")
                         .frame(maxWidth: .infinity)
