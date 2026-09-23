@@ -45,11 +45,13 @@ Builds without a `GoogleService-Info.plist` use the **mock backend**. Sign in wi
 
 **Before you leave (at home):**
 1. **Places** tab → **Use current location as home**. The Status section should list "Home" under Monitoring.
-2. **Arrival** tab → pick the shortest delay (**5 min**).
-3. Keep **at least one item unchecked** on the list. The reminder only counts items you haven't ticked off; if everything is checked, nothing is sent.
-4. Lock the phone with the side button.
-   - **Don't swipe the app away** in the app switcher.
-   - In builds before Phase 3, the mock backend forgets the sign-in when the app is fully closed, and the arrival is then ignored.
+2. **Settings → Diagnostics** (Phase 3 builds). Everything under **Reminder health** should be green; tap **Open iOS Settings** to fix anything red. Under **Geofences**, tap **Check now**: Home should say **inside**.
+   - A home set while you're already inside it only fires after you leave and come back, which is exactly this test.
+3. **Arrival** tab → pick the shortest delay (**5 min**).
+4. Keep **at least one item unchecked** on the list. The reminder only counts items you haven't ticked off; if everything is checked, nothing is sent.
+5. Lock the phone with the side button.
+   - In builds **before Phase 3**, don't swipe the app away: the demo backend forgets the sign-in when the app is fully closed, and the arrival is then ignored.
+   - Phase 3 builds save the sign-in and list on the phone. Once the basic test works, repeat it after swiping the app away to check that iOS relaunches it for the geofence.
 
 **The test:**
 1. Walk or drive **at least 300–500 m** away (well outside the 120 m home zone) and stay out a few minutes.
@@ -61,7 +63,8 @@ Builds without a `GoogleService-Info.plist` use the **mock backend**. Sign in wi
 
 ## 5. If nothing arrives
 
-- Open the app → **Places**. The last line of the Status section shows the most recent location event (e.g. "Entered home geofence"). Screenshot it and send it to Claude.
+- **Phase 3 builds:** Settings → **Diagnostics**. The event log shows each step: a launch "by a location event", "Entered home geofence", possibly "Waiting for your list to load", then "Unload reminder in 5 min". Tap the share button (top right) and send the log to Claude.
+- **Older builds:** open the app → **Places**. The last line of the Status section shows the most recent location event (e.g. "Entered home geofence"). Screenshot it and send it to Claude.
 - Check Settings → Smart Grocery:
   - Location = **Always**;
   - **Precise Location** on;
@@ -69,11 +72,9 @@ Builds without a `GoogleService-Info.plist` use the **mock backend**. Sign in wi
 - **Low Power Mode** and a disabled **Background App Refresh** can delay or block location wake-ups.
 - **Known gap:** after iOS relaunches the app in the background, the Arrival tab may show "Ready for arrival" even though the reminder is still scheduled. Wait for the notification.
 
-## 6. What Phase 3 changes here
+## 6. What Phase 3 builds change
 
-Phase 3 (see [phase-3-plan.md](phase-3-plan.md)):
-- makes the reminder survive iOS closing the app;
-- makes the demo backend save its data on the phone;
-- adds a **Diagnostics** screen with a "Reminder health" checklist and a shareable event log.
-
-With a Phase 3 build, use Diagnostics instead of the Status line in step 5: check that everything is green before leaving, and share the log if anything goes wrong.
+See [phase-3-plan.md](phase-3-plan.md):
+- the reminder survives iOS closing the app (the geofence is recognized after a relaunch and waits for the list to load);
+- the demo backend saves its sign-in, list and places on the phone;
+- a **Diagnostics** screen (Settings → Diagnostics, or Places → Diagnostics) shows the reminder-health checklist, what iOS thinks about each geofence, and a shareable event log.

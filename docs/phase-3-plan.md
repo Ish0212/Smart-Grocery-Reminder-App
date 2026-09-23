@@ -1,6 +1,6 @@
 # Phase 3 — Hardening: plan
 
-Status: **PR 1 in progress** on branch `phase3-hardening` (stacked on `phase2-polish` / PR #3).
+Status: **PR 1 implemented** on branch `phase3-hardening` (stacked on `phase2-polish` / PR #3); PR 2 and PR 3 not started.
 Roadmap context: [PLAN.md](PLAN.md). Device testing: [iphone-testing.md](iphone-testing.md).
 
 ## Context

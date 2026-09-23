@@ -6,13 +6,15 @@ SwiftUI prototype for location-aware grocery lists and home-arrival “unload th
 
 - Shopping list with add / complete / delete
 - Email/password sign-in: Firebase Auth, or the mock backend (`demo@grocery.app` / `demo123`)
-- List and preferences synced live with Firestore (loads from the local cache offline, updates across devices), or kept in memory in mock mode
+- List and preferences synced live with Firestore (loads from the local cache offline, updates across devices), or saved on the device in mock mode
 - Customizable home-arrival unload timer (5–30 minutes)
 - Core Location geofencing service for home + grocery stores
 - Apple Maps search to add grocery stores or set your home address (up to 19 stores, the iOS geofence limit)
 - Siri / Shortcuts / Spotlight: “Add an item to Smart Grocery” without opening the app
 - Local notifications: daily list, store entry, car-unload (+ repeat / completion actions)
 - Settings for reminder preferences
+- Reminders survive iOS closing the app: geofence wake-ups are recognized after a relaunch and wait for the list to load
+- Diagnostics screen (Settings → Diagnostics): reminder-health checklist, geofence states and a shareable event log
 - Simulator hooks to fake store entry and home arrival
 
 ## Requirements
@@ -61,6 +63,8 @@ CI can build an unsigned `.ipa` that [Sideloadly](https://sideloadly.io) signs w
 3. **Install:** connect the iPhone by USB and tap **Trust**. In Sideloadly, pick the phone, enter your Apple ID, drop in the `.ipa` and press **Start** (enter the 2FA code when asked). If it says the bundle ID isn't available, open **Advanced options** and change the bundle ID (e.g. add your initials).
 4. **On the iPhone:** Settings → Privacy & Security → **Developer Mode** → on (the phone restarts). Then Settings → General → **VPN & Device Management** → trust your Apple ID's developer app.
 5. Open **Smart Grocery**. Without a `GoogleService-Info.plist` the build uses the mock backend: sign in with the demo account below. Allow notifications and choose **Always** for location so geofences work in the background.
+
+For the full walkthrough, including the leave-home field test and troubleshooting with the Diagnostics screen, see [docs/iphone-testing.md](docs/iphone-testing.md).
 
 ### Running tests
 

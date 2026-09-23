@@ -22,7 +22,9 @@ An iOS app that keeps grocery lists handy and uses location to remind you:
 | Apple Maps place search (stores + home) | Implemented (Phase 2) |
 | Siri / Shortcuts quick-add (App Intents) | Implemented (Phase 2) |
 | Accessibility labels / Dynamic Type friendly layout | Baseline done |
-| Unit tests (XCTest) | Done (services, sync, places, quick-add, reminder policy) |
+| Background reliability (relaunch-safe geofences, event queue, saved demo backend) | Implemented (Phase 3, PR 1) |
+| Diagnostics screen (reminder health + event log) | Implemented (Phase 3, PR 1) |
+| Unit tests (XCTest) | Done (services, sync, places, quick-add, reminder policy, location events, persistence, diagnostics) |
 | CI (GitHub Actions, macOS) | Done (`xcodegen` + `xcodebuild build test`) |
 
 ## Architecture
