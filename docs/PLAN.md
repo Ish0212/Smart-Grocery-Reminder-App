@@ -70,11 +70,11 @@ users/{uid}                  (profile: email + displayName live in Firebase Auth
 - Signed-in users stay signed in across launches (`AppState.restoreSession()` at launch; waits for Firebase if the device was locked)
 - Follow-ups: rules unit tests with the Firebase emulator; make background geofence wakeups wait for the list to load before scheduling reminders
 
-### Phase 2 — Polish
-- MapKit search for store addresses
-- Widget / App Intents for quick-add
-- Family Sharing lists (optional)
-- Better offline persistence with Firestore cache
+### Phase 2 — Polish (in progress — detailed plan: [phase-2-plan.md](phase-2-plan.md))
+- Live, offline-first sync with Firestore snapshot listeners (also fixes the PR #2 session blockers)
+- MapKit search for stores and home address, with the 20-geofence limit enforced
+- App Intents quick-add (Siri / Shortcuts / Spotlight)
+- Deferred: home-screen widget (needs an extension + App Group), Family Sharing lists (needs a shared-list data model)
 
 ### Phase 3 — Hardening
 - Background location reliability testing
