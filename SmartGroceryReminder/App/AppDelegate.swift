@@ -14,7 +14,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         let state = AppState(
             useMockBackend: !FirebaseBootstrap.isConfigured,
             mockStorageDirectory: isTesting ? nil : AppFiles.directory,
-            diagnostics: DiagnosticsLog(store: isTesting ? nil : JSONFileStore<[DiagnosticEntry]>.appSupport("diagnostics.json"))
+            diagnostics: DiagnosticsLog(store: isTesting ? nil : JSONFileStore<[DiagnosticEntry]>.appSupport("diagnostics.json")),
+            backgroundActivity: isTesting ? NoBackgroundActivity() : UIKitBackgroundActivity()
         )
         // With @UIApplicationDelegateAdaptor, UIApplication.shared.delegate is SwiftUI's own
         // delegate, so App Intents reach this state through AppState.shared instead.
@@ -49,8 +50,9 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
     ) {
         let action = response.actionIdentifier
         let category = response.notification.request.content.categoryIdentifier
+        let itemCount = response.notification.request.content.userInfo[NotificationUserInfo.itemCount] as? Int
         Task { @MainActor in
-            await self.appState.handleNotificationAction(action, category: category)
+            await self.appState.handleNotificationAction(action, category: category, itemCount: itemCount)
             completionHandler()
         }
     }

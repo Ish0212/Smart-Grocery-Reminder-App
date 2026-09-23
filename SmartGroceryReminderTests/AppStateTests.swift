@@ -172,16 +172,6 @@ final class AppStateTests: XCTestCase {
         XCTAssertEqual(state.shoppingList.first?.title, "Oat milk")
     }
 
-    /// Sync results arrive asynchronously; poll on the main actor until `condition` holds.
-    @MainActor
-    private func waitUntil(_ condition: () -> Bool) async throws {
-        for _ in 0..<200 {
-            if condition() { return }
-            try await Task.sleep(nanoseconds: 10_000_000)
-        }
-        XCTFail("Timed out waiting for condition")
-    }
-
     @MainActor
     func testRestoreSessionWithMockBackendStaysSignedOut() async {
         let state = AppState()

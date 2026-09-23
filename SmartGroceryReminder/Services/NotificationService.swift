@@ -33,24 +33,13 @@ final class NotificationService: ObservableObject {
             NotificationID.carUnloadRepeat
         ])
 
-        let content = UNMutableNotificationContent()
-        content.title = "Groceries still in the car?"
-        content.body = itemCount == 1
-            ? "You have 1 item waiting — don't forget to bring it inside."
-            : "You have \(itemCount) items waiting — don't forget to bring them inside."
-        content.sound = .default
-        content.categoryIdentifier = NotificationCategory.carUnload
-
+        let content = Self.carUnloadContent(itemCount: itemCount, isRepeat: false)
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: max(delay, 5), repeats: false)
         let request = UNNotificationRequest(identifier: NotificationID.carUnload, content: content, trigger: trigger)
         try? await center.add(request)
 
         if repeats {
-            let repeatContent = UNMutableNotificationContent()
-            repeatContent.title = "Still need to unload?"
-            repeatContent.body = content.body
-            repeatContent.sound = .default
-            repeatContent.categoryIdentifier = NotificationCategory.carUnload
+            let repeatContent = Self.carUnloadContent(itemCount: itemCount, isRepeat: true)
             let repeatTrigger = UNTimeIntervalNotificationTrigger(timeInterval: max(delay + repeatInterval, 60), repeats: false)
             let repeatRequest = UNNotificationRequest(
                 identifier: NotificationID.carUnloadRepeat,
@@ -61,6 +50,20 @@ final class NotificationService: ObservableObject {
         }
 
         await refreshPendingCount()
+    }
+
+    /// The car-unload reminder. It carries the item count so "Remind again" works even when the
+    /// action cold-launches the app before the list has loaded.
+    static func carUnloadContent(itemCount: Int, isRepeat: Bool) -> UNMutableNotificationContent {
+        let content = UNMutableNotificationContent()
+        content.title = isRepeat ? "Still need to unload?" : "Groceries still in the car?"
+        content.body = itemCount == 1
+            ? "You have 1 item waiting — don't forget to bring it inside."
+            : "You have \(itemCount) items waiting — don't forget to bring them inside."
+        content.sound = .default
+        content.categoryIdentifier = NotificationCategory.carUnload
+        content.userInfo = [NotificationUserInfo.itemCount: itemCount]
+        return content
     }
 
     func sendGroceryStoreReminder(itemCount: Int) async {
@@ -150,6 +153,10 @@ enum NotificationID {
 enum NotificationCategory {
     static let carUnload = "CAR_UNLOAD"
     static let storeVisit = "STORE_VISIT"
+}
+
+enum NotificationUserInfo {
+    static let itemCount = "itemCount"
 }
 
 enum NotificationAction {
