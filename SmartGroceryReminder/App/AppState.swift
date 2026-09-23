@@ -276,6 +276,7 @@ final class AppState: ObservableObject {
     func restoreSession() {
         authService.restoreSession { [weak self] user in
             guard let self, self.canRestoreSession else { return }
+            self.diagnostics.record(.session, "Restored the saved sign-in")
             self.startSession(for: user)
         }
     }

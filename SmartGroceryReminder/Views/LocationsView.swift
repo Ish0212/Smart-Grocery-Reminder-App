@@ -17,6 +17,9 @@ struct LocationsView: View {
                     Text(locationService.lastEventDescription)
                         .font(.footnote)
                         .foregroundStyle(.secondary)
+                    NavigationLink("Diagnostics") {
+                        DiagnosticsView(diagnostics: appState.diagnostics)
+                    }
                     if locationService.authorizationStatus == .notDetermined {
                         Button("Request location access") {
                             locationService.requestAuthorization()

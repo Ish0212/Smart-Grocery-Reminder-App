@@ -4,6 +4,7 @@ import UserNotifications
 @MainActor
 final class NotificationService: ObservableObject {
     @Published var isAuthorized = false
+    @Published private(set) var authorizationStatus: UNAuthorizationStatus = .notDetermined
     @Published var pendingCount = 0
 
     private let center = UNUserNotificationCenter.current()
@@ -19,7 +20,15 @@ final class NotificationService: ObservableObject {
         } catch {
             isAuthorized = false
         }
+        await refreshAuthorizationStatus()
         await refreshPendingCount()
+    }
+
+    /// Reads the current permission without prompting (it can change in Settings at any time).
+    func refreshAuthorizationStatus() async {
+        let status = await center.notificationSettings().authorizationStatus
+        authorizationStatus = status
+        isAuthorized = status == .authorized
     }
 
     func scheduleHomeArrivalReminder(

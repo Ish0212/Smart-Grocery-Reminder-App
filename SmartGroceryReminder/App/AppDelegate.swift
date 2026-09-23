@@ -28,6 +28,14 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
         UNUserNotificationCenter.current().delegate = self
+        let launchedForLocation = launchOptions?[.location] != nil
+        let inBackground = application.applicationState == .background
+        appState.diagnostics.record(
+            .launch,
+            launchedForLocation
+                ? "Launched by a location event\(inBackground ? " (in the background)" : "")"
+                : (inBackground ? "Launched in the background" : "Launched")
+        )
         appState.restoreSession()
         return true
     }
