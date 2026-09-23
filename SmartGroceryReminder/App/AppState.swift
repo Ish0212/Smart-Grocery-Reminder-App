@@ -49,7 +49,7 @@ final class AppState: ObservableObject {
             self.listService = FirestoreShoppingListService()
         }
         self.diagnostics = diagnostics
-        self.locationService = LocationService()
+        self.locationService = LocationService(diagnostics: diagnostics)
         self.notificationService = NotificationService()
         self.homeArrivalTimer = HomeArrivalTimerService()
 
@@ -71,27 +71,28 @@ final class AppState: ObservableObject {
             }
             .store(in: &cancellables)
 
-        locationService.$didArriveHome
-            .receive(on: RunLoop.main)
-            .sink { [weak self] arrived in
-                guard let self, arrived else { return }
-                self.homeArrivalTimer.start(duration: self.preferences.homeArrivalDelay)
-                self.locationService.consumeHomeArrival()
+        // Delivered synchronously on the main actor, so no event is lost before it is handled.
+        locationService.events
+            .sink { [weak self] event in
+                self?.handleLocationEvent(event)
             }
             .store(in: &cancellables)
+    }
 
-        locationService.$didEnterGroceryStore
-            .receive(on: RunLoop.main)
-            .sink { [weak self] entered in
-                guard let self, entered else { return }
-                let openCount = self.shoppingList.filter { !$0.isCompleted }.count
-                self.locationService.consumeStoreEntry()
-                guard Self.shouldSendStoreReminder(preferences: self.preferences, openItemCount: openCount) else { return }
-                Task {
-                    await self.notificationService.sendGroceryStoreReminder(itemCount: openCount)
-                }
+    // MARK: - Location events
+
+    func handleLocationEvent(_ event: LocationEvent) {
+        guard event.transition == .enter else { return }
+        switch event.kind {
+        case .home:
+            homeArrivalTimer.start(duration: preferences.homeArrivalDelay)
+        case .groceryStore:
+            let openCount = shoppingList.filter { !$0.isCompleted }.count
+            guard Self.shouldSendStoreReminder(preferences: preferences, openItemCount: openCount) else { return }
+            Task {
+                await self.notificationService.sendGroceryStoreReminder(itemCount: openCount)
             }
-            .store(in: &cancellables)
+        }
     }
 
     // MARK: - Reminder policy
