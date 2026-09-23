@@ -6,9 +6,11 @@ SwiftUI prototype for location-aware grocery lists and home-arrival “unload th
 
 - Shopping list with add / complete / delete
 - Email/password sign-in: Firebase Auth, or the mock backend (`demo@grocery.app` / `demo123`)
-- List and preferences synced to Firestore (offline-first), or kept in memory in mock mode
+- List and preferences synced live with Firestore (loads from the local cache offline, updates across devices), or kept in memory in mock mode
 - Customizable home-arrival unload timer (5–30 minutes)
 - Core Location geofencing service for home + grocery stores
+- Apple Maps search to add grocery stores or set your home address (up to 19 stores, the iOS geofence limit)
+- Siri / Shortcuts / Spotlight: “Add an item to Smart Grocery” without opening the app
 - Local notifications: daily list, store entry, car-unload (+ repeat / completion actions)
 - Settings for reminder preferences
 - Simulator hooks to fake store entry and home arrival
@@ -73,13 +75,15 @@ Or press **⌘U** in Xcode.
 SmartGroceryReminder/
   App/AppState.swift
   Models/Models.swift
-  Services/          # auth, list, location, notifications, timer
+  Services/          # auth, list sync, location, place search, notifications, timer
+  Intents/           # Siri / Shortcuts (App Intents)
   Views/             # auth, list, arrival, places, settings
   Assets.xcassets
   Info.plist
 SmartGroceryReminderTests/  # XCTest unit tests
 .github/workflows/   # iOS CI
 docs/PLAN.md         # architecture & phased roadmap
+docs/phase-2-plan.md # Phase 2 (Polish) plan
 project.yml          # XcodeGen spec
 firestore.rules      # Firestore security rules
 firebase.json        # Firebase CLI config (deploys the rules)
@@ -100,6 +104,10 @@ To use a real Firebase project:
 With Firebase, users stay signed in across launches. Data is stored under `users/{uid}`: `items/{itemId}` for list items and `preferences/main` for reminder settings. The rules only let a signed-in user read and write their own tree.
 
 See [docs/PLAN.md](docs/PLAN.md) for data shape, geofence flow, and privacy notes.
+
+## Siri & Shortcuts
+
+The app ships an App Intent, **Add Grocery Item**, plus App Shortcuts, so you can say “Add an item to Smart Grocery” (or run it from the Shortcuts app / Spotlight). Siri asks for the item and adds it to your list. It runs in the app's process without opening the app. You must be signed in: with Firebase the session is restored automatically; in mock mode the app must already be running and signed in.
 
 ## Privacy / permissions
 

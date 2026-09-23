@@ -231,6 +231,20 @@ final class AppState: ObservableObject {
         }
     }
 
+    // MARK: - Siri & Shortcuts
+
+    /// The running app's state, for entry points outside SwiftUI (App Intents). Set by `AppDelegate`.
+    static weak var shared: AppState?
+
+    /// Adds an item from Siri / Shortcuts and returns the trimmed title that was added.
+    func quickAdd(_ rawTitle: String) async throws -> String {
+        let title = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else { throw QuickAddError.emptyItem }
+        guard isAuthenticated else { throw QuickAddError.notSignedIn }
+        await addItem(title)
+        return title
+    }
+
     // MARK: - Places
 
     /// iOS monitors at most 20 regions per app; one is kept for home.

@@ -137,6 +137,41 @@ final class AppStateTests: XCTestCase {
         XCTAssertFalse(state.preferencesLoaded)
     }
 
+    @MainActor
+    func testQuickAddRequiresSignIn() async {
+        let state = AppState()
+        do {
+            _ = try await state.quickAdd("Milk")
+            XCTFail("Expected notSignedIn")
+        } catch {
+            XCTAssertEqual(error as? QuickAddError, .notSignedIn)
+        }
+    }
+
+    @MainActor
+    func testQuickAddRejectsBlankItem() async {
+        let state = AppState()
+        state.isAuthenticated = true
+        do {
+            _ = try await state.quickAdd("   \n")
+            XCTFail("Expected emptyItem")
+        } catch {
+            XCTAssertEqual(error as? QuickAddError, .emptyItem)
+        }
+    }
+
+    @MainActor
+    func testQuickAddTrimsAndInsertsAtTop() async throws {
+        let state = AppState()
+        state.isAuthenticated = true
+        state.currentUser = AppUser(id: "quick", email: "q@b.c", displayName: "Q")
+
+        let title = try await state.quickAdd("  Oat milk \n")
+
+        XCTAssertEqual(title, "Oat milk")
+        XCTAssertEqual(state.shoppingList.first?.title, "Oat milk")
+    }
+
     /// Sync results arrive asynchronously; poll on the main actor until `condition` holds.
     @MainActor
     private func waitUntil(_ condition: () -> Bool) async throws {

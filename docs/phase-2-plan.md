@@ -1,6 +1,6 @@
 # Phase 2 — Polish: plan
 
-Status: **in progress** on branch `phase2-polish` (stacked on `phase1-firebase` / PR #2).
+Status: **implemented** on branch `phase2-polish` (stacked on `phase1-firebase` / PR #2); CI verification pending.
 Roadmap context: [PLAN.md](PLAN.md).
 
 ## Context

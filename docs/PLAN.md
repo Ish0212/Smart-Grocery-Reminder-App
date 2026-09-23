@@ -18,8 +18,11 @@ An iOS app that keeps grocery lists handy and uses location to remind you:
 | Local notifications + actions | Done (**All brought in** / **Remind again** handled via `AppDelegate`) |
 | Reminder preferences (store toggle, repeat interval) | Done |
 | Firebase Auth / Firestore | Implemented (used automatically when `GoogleService-Info.plist` is bundled; mock otherwise) |
+| Live sync (Firestore snapshot listeners, offline cache) | Implemented (Phase 2) |
+| Apple Maps place search (stores + home) | Implemented (Phase 2) |
+| Siri / Shortcuts quick-add (App Intents) | Implemented (Phase 2) |
 | Accessibility labels / Dynamic Type friendly layout | Baseline done |
-| Unit tests (XCTest) | Done (services + reminder policy) |
+| Unit tests (XCTest) | Done (services, sync, places, quick-add, reminder policy) |
 | CI (GitHub Actions, macOS) | Done (`xcodegen` + `xcodebuild build test`) |
 
 ## Architecture
@@ -70,7 +73,7 @@ users/{uid}                  (profile: email + displayName live in Firebase Auth
 - Signed-in users stay signed in across launches (`AppState.restoreSession()` at launch; waits for Firebase if the device was locked)
 - Follow-ups: rules unit tests with the Firebase emulator; make background geofence wakeups wait for the list to load before scheduling reminders
 
-### Phase 2 — Polish (in progress — detailed plan: [phase-2-plan.md](phase-2-plan.md))
+### Phase 2 — Polish (implemented; needs a device to try Firebase sync, search and Siri — plan: [phase-2-plan.md](phase-2-plan.md))
 - Live, offline-first sync with Firestore snapshot listeners (also fixes the PR #2 session blockers)
 - MapKit search for stores and home address, with the 20-geofence limit enforced
 - App Intents quick-add (Siri / Shortcuts / Spotlight)
