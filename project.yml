@@ -8,12 +8,22 @@ options:
 settings:
   TARGETED_DEVICE_FAMILY: "1"
   SWIFT_VERSION: "5.0"
+packages:
+  Firebase:
+    url: https://github.com/firebase/firebase-ios-sdk
+    exactVersion: 12.19.2
 targets:
   SmartGroceryReminder:
     type: application
     platform: iOS
     sources:
       - path: SmartGroceryReminder
+    dependencies:
+      - package: Firebase
+        products:
+          - FirebaseCore
+          - FirebaseAuth
+          - FirebaseFirestore
     settings:
       PRODUCT_BUNDLE_IDENTIFIER: com.smartgrocery.reminder
       INFOPLIST_FILE: SmartGroceryReminder/Info.plist

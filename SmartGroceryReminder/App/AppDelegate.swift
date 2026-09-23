@@ -5,7 +5,11 @@ import UserNotifications
 /// That is required to receive an action (e.g. "All brought in") that cold-launched the app.
 @MainActor
 final class AppDelegate: NSObject, UIApplicationDelegate {
-    let appState = AppState()
+    let appState: AppState = {
+        // Firebase must be configured before AppState picks its backend.
+        FirebaseBootstrap.configureIfAvailable()
+        return AppState(useMockBackend: !FirebaseBootstrap.isConfigured)
+    }()
 
     func application(
         _ application: UIApplication,

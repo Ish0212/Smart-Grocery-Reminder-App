@@ -1,17 +1,18 @@
 import Foundation
+import FirebaseCore
 
 enum AuthError: LocalizedError {
     case invalidCredentials
     case emailInUse
     case weakPassword
-    case notConfigured
+    case invalidEmail
 
     var errorDescription: String? {
         switch self {
         case .invalidCredentials: return "Email or password is incorrect."
         case .emailInUse: return "An account with this email already exists."
         case .weakPassword: return "Password must be at least 6 characters."
-        case .notConfigured: return "Firebase is not configured. Add GoogleService-Info.plist or use mock mode."
+        case .invalidEmail: return "Enter a valid email address."
         }
     }
 }
@@ -30,13 +31,16 @@ protocol ShoppingListServiceProtocol {
     func savePreferences(_ preferences: UserPreferences, userId: String) async throws
 }
 
-/// Soft Firebase bootstrap so the prototype runs in mock mode without a plist.
+/// Configures Firebase only when GoogleService-Info.plist is bundled.
+/// Without it (e.g. in CI) the app keeps running on the mock backend.
 enum FirebaseBootstrap {
     static func configureIfAvailable() {
-        // When ready for Firebase:
-        // 1. Add Firebase iOS SDK via SPM (FirebaseAuth, FirebaseFirestore)
-        // 2. Drop GoogleService-Info.plist into the app target
-        // 3. Call FirebaseApp.configure() here
-        // 4. Set AppState(useMockBackend: false)
+        guard FirebaseApp.app() == nil,
+              Bundle.main.path(forResource: "GoogleService-Info", ofType: "plist") != nil else { return }
+        FirebaseApp.configure()
+    }
+
+    static var isConfigured: Bool {
+        FirebaseApp.app() != nil
     }
 }

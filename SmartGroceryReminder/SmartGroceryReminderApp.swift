@@ -5,10 +5,6 @@ struct SmartGroceryReminderApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @Environment(\.scenePhase) private var scenePhase
 
-    init() {
-        FirebaseBootstrap.configureIfAvailable()
-    }
-
     var body: some Scene {
         WindowGroup {
             RootView()

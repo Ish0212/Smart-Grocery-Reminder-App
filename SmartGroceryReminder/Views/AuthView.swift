@@ -4,9 +4,9 @@ struct AuthView: View {
     @EnvironmentObject private var appState: AppState
 
     @State private var mode: Mode = .signIn
-    @State private var email = "demo@grocery.app"
-    @State private var password = "demo123"
-    @State private var displayName = "Demo Shopper"
+    @State private var email = ""
+    @State private var password = ""
+    @State private var displayName = ""
     @State private var isLoading = false
     @State private var errorMessage: String?
 
@@ -20,13 +20,24 @@ struct AuthView: View {
                 VStack(alignment: .leading, spacing: 28) {
                     header
                     formCard
-                    demoHint
+                    if appState.useMockBackend {
+                        demoHint
+                    }
                 }
                 .padding(24)
             }
             .background(Color(.systemGroupedBackground).ignoresSafeArea())
             .navigationBarHidden(true)
+            .onAppear(perform: prefillDemoAccount)
         }
+    }
+
+    /// The demo account only exists in the mock backend.
+    private func prefillDemoAccount() {
+        guard appState.useMockBackend, email.isEmpty else { return }
+        email = "demo@grocery.app"
+        password = "demo123"
+        displayName = "Demo Shopper"
     }
 
     private var header: some View {

@@ -27,12 +27,21 @@ jobs:
       - name: Generate Xcode project
         run: xcodegen generate --spec project.yml
 
+      # Firebase and its dependencies are large; keep the resolved package checkouts between runs.
+      - name: Cache Swift packages
+        uses: actions/cache@v4
+        with:
+          path: .spm
+          key: spm-${{ runner.os }}-${{ hashFiles('project.yml') }}
+          restore-keys: spm-${{ runner.os }}-
+
       - name: Pick an eligible iPhone simulator
         id: sim
         run: |
           # -showdestinations lists only simulators this Xcode can run the scheme on.
           find_sim() {
-            xcodebuild -showdestinations -project SmartGroceryReminder.xcodeproj -scheme SmartGroceryReminder 2>&1 \
+            xcodebuild -showdestinations -project SmartGroceryReminder.xcodeproj -scheme SmartGroceryReminder \
+              -clonedSourcePackagesDirPath .spm 2>&1 \
               | tee /dev/stderr | grep -m1 'platform:iOS Simulator.*name:iPhone' || true
           }
           # The runner's default Xcode may not match the installed simulator runtimes,
@@ -69,6 +78,7 @@ jobs:
           xcodebuild \
             -project SmartGroceryReminder.xcodeproj \
             -scheme SmartGroceryReminder \
+            -clonedSourcePackagesDirPath .spm \
             -destination "id=${{ steps.sim.outputs.udid }}" \
             -resultBundlePath build/Results.xcresult \
             CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" \

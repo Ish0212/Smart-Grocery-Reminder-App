@@ -1,11 +1,12 @@
 # Smart Grocery Reminder App
 
-SwiftUI prototype for location-aware grocery lists and home-arrival “unload the car” reminders. Firebase Auth/Firestore is stubbed behind protocols so you can run with a mock backend first.
+SwiftUI prototype for location-aware grocery lists and home-arrival “unload the car” reminders. It runs on a built-in mock backend, and switches to Firebase Auth + Firestore automatically when a `GoogleService-Info.plist` is present.
 
 ## Features in this prototype
 
 - Shopping list with add / complete / delete
-- Mock authentication (`demo@grocery.app` / `demo123`)
+- Email/password sign-in: Firebase Auth, or the mock backend (`demo@grocery.app` / `demo123`)
+- List and preferences synced to Firestore (offline-first), or kept in memory in mock mode
 - Customizable home-arrival unload timer (5–30 minutes)
 - Core Location geofencing service for home + grocery stores
 - Local notifications: daily list, store entry, car-unload (+ repeat / completion actions)
@@ -14,9 +15,9 @@ SwiftUI prototype for location-aware grocery lists and home-arrival “unload th
 
 ## Requirements
 
-- macOS with **Xcode 15+**
+- macOS with **Xcode 26.2+** (required by the Firebase SDK)
 - iOS **17+** simulator or device
-- (Optional) Firebase project for production backend
+- (Optional) Firebase project for the real backend (see [Firebase](#firebase))
 
 > This repo was scaffolded on Windows. Builds and tests run in GitHub Actions (see below), so you don't need a Mac to verify changes.
 
@@ -25,7 +26,9 @@ SwiftUI prototype for location-aware grocery lists and home-arrival “unload th
 Every push to `main` and every pull request runs [`.github/workflows/ios-ci.yml`](.github/workflows/ios-ci.yml) on a macOS runner:
 
 1. `xcodegen generate` from `project.yml` (the `.xcodeproj` is generated, not committed)
-2. `xcodebuild build test` on an available iPhone simulator
+2. `xcodebuild build test` on an available iPhone simulator (Swift packages are cached between runs)
+
+CI has no `GoogleService-Info.plist`, so it builds the Firebase code but runs the app and tests on the mock backend.
 
 If a run fails, open it under the repo's **Actions** tab to read the log, or download the `xcresult` artifact and open it in Xcode.
 
@@ -57,7 +60,7 @@ xcodebuild -project SmartGroceryReminder.xcodeproj -scheme SmartGroceryReminder 
 
 Or press **⌘U** in Xcode.
 
-### Demo login
+### Demo login (mock backend)
 
 | Field | Value |
 |-------|-------|
@@ -77,17 +80,24 @@ SmartGroceryReminder/
 SmartGroceryReminderTests/  # XCTest unit tests
 .github/workflows/   # iOS CI
 docs/PLAN.md         # architecture & phased roadmap
-Config/GoogleService-Info.example.plist
 project.yml          # XcodeGen spec
+firestore.rules      # Firestore security rules
+firebase.json        # Firebase CLI config (deploys the rules)
 ```
 
-## Firebase (Phase 1)
+## Firebase
 
-1. Create a Firebase iOS app with bundle id `com.smartgrocery.reminder`
-2. Download `GoogleService-Info.plist` into the app target (gitignored)
-3. Add SPM package `https://github.com/firebase/firebase-ios-sdk` → `FirebaseAuth`, `FirebaseFirestore`
-4. Call `FirebaseApp.configure()` in `FirebaseBootstrap`
-5. Construct `AppState(useMockBackend: false)`
+The Firebase SDK (`FirebaseAuth`, `FirebaseFirestore`) is already a Swift package dependency in `project.yml`. At launch, `FirebaseBootstrap` configures Firebase only if `GoogleService-Info.plist` is in the app bundle; otherwise the app uses the mock backend. **Settings → Account → Backend** shows which one is active.
+
+To use a real Firebase project:
+
+1. In the [Firebase console](https://console.firebase.google.com), create a project and add an **iOS app** with bundle id `com.smartgrocery.reminder`
+2. **Authentication** → enable the **Email/Password** provider
+3. **Firestore Database** → create a database
+4. Download `GoogleService-Info.plist` to `SmartGroceryReminder/GoogleService-Info.plist` (gitignored), then run `xcodegen generate`
+5. Deploy the security rules: `firebase deploy --only firestore:rules` (with the [Firebase CLI](https://firebase.google.com/docs/cli)), or paste `firestore.rules` into the console's **Rules** tab
+
+Data is stored under `users/{uid}`: `items/{itemId}` for list items and `preferences/main` for reminder settings. The rules only let a signed-in user read and write their own tree.
 
 See [docs/PLAN.md](docs/PLAN.md) for data shape, geofence flow, and privacy notes.
 
