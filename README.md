@@ -52,6 +52,16 @@ open SmartGroceryReminder.xcodeproj
 3. Set the target’s Info.plist to `SmartGroceryReminder/Info.plist` (or merge the location usage strings)
 4. Build & run
 
+### Install on an iPhone from Windows (no Mac)
+
+CI can build an unsigned `.ipa` that [Sideloadly](https://sideloadly.io) signs with your Apple ID and installs over USB. A free Apple ID works; the install expires after 7 days and must be re-signed.
+
+1. **Build:** Actions tab → **iOS CI** → **Run workflow** → pick the branch, tick **device_ipa** (or `gh workflow run ios-ci.yml --ref <branch> -f device_ipa=true`). Download the `SmartGroceryReminder-unsigned-ipa` artifact and unzip it.
+2. **Windows prerequisites:** install **iTunes** and **iCloud** from apple.com (not the Microsoft Store versions), then install Sideloadly.
+3. **Install:** connect the iPhone by USB and tap **Trust**. In Sideloadly, pick the phone, enter your Apple ID, drop in the `.ipa` and press **Start** (enter the 2FA code when asked). If it says the bundle ID isn't available, open **Advanced options** and change the bundle ID (e.g. add your initials).
+4. **On the iPhone:** Settings → Privacy & Security → **Developer Mode** → on (the phone restarts). Then Settings → General → **VPN & Device Management** → trust your Apple ID's developer app.
+5. Open **Smart Grocery**. Without a `GoogleService-Info.plist` the build uses the mock backend: sign in with the demo account below. Allow notifications and choose **Always** for location so geofences work in the background.
+
 ### Running tests
 
 ```bash
