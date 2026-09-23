@@ -50,8 +50,9 @@ final class LocationService: NSObject, ObservableObject {
     private let manager = CLLocationManager()
     private let diagnostics: DiagnosticsLog
 
-    init(diagnostics: DiagnosticsLog = DiagnosticsLog()) {
-        self.diagnostics = diagnostics
+    /// - Parameter diagnostics: `nil` keeps events in an in-memory log.
+    init(diagnostics: DiagnosticsLog? = nil) {
+        self.diagnostics = diagnostics ?? DiagnosticsLog()
         super.init()
         manager.delegate = self
         manager.desiredAccuracy = kCLLocationAccuracyHundredMeters

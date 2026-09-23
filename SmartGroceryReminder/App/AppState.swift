@@ -38,14 +38,16 @@ final class AppState: ObservableObject {
     /// - Parameters:
     ///   - mockStorageDirectory: where the demo backend saves accounts, lists and preferences.
     ///     `nil` (tests, previews) keeps them in memory.
-    ///   - diagnostics: the event log; the default keeps entries in memory.
-    ///   - backgroundActivity: extra background time while a location wake-up waits for data.
+    ///   - diagnostics: the event log; `nil` keeps entries in memory.
+    ///   - backgroundActivity: extra background time while a location wake-up waits for data; `nil` for none.
     init(
         useMockBackend: Bool = true,
         mockStorageDirectory: URL? = nil,
-        diagnostics: DiagnosticsLog = DiagnosticsLog(),
-        backgroundActivity: BackgroundActivityProviding = NoBackgroundActivity()
+        diagnostics: DiagnosticsLog? = nil,
+        backgroundActivity: BackgroundActivityProviding? = nil
     ) {
+        // Defaults are created here: in Swift 5 mode a default argument can't call a main-actor initializer.
+        let diagnostics = diagnostics ?? DiagnosticsLog()
         self.useMockBackend = useMockBackend
         if useMockBackend {
             self.authService = MockAuthService(
@@ -59,7 +61,7 @@ final class AppState: ObservableObject {
             self.listService = FirestoreShoppingListService()
         }
         self.diagnostics = diagnostics
-        self.backgroundActivity = backgroundActivity
+        self.backgroundActivity = backgroundActivity ?? NoBackgroundActivity()
         self.locationService = LocationService(diagnostics: diagnostics)
         self.notificationService = NotificationService()
         self.homeArrivalTimer = HomeArrivalTimerService()
