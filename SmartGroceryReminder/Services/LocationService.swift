@@ -114,7 +114,7 @@ final class LocationService: NSObject, ObservableObject {
     }
 
     /// Regions to stop (monitored but no longer wanted, including old-format ids) and to start.
-    static func regionDiff(current: Set<String>, desired: Set<String>) -> (stop: Set<String>, start: Set<String>) {
+    nonisolated static func regionDiff(current: Set<String>, desired: Set<String>) -> (stop: Set<String>, start: Set<String>) {
         (current.subtracting(desired), desired.subtracting(current))
     }
 
