@@ -13,7 +13,7 @@ extension XCTestCase {
 
     /// Sync results arrive asynchronously; poll on the main actor until `condition` holds.
     @MainActor
-    func waitUntil(_ condition: () -> Bool) async throws {
+    func waitUntil(_ condition: @escaping @MainActor () -> Bool) async throws {
         for _ in 0..<200 {
             if condition() { return }
             try await Task.sleep(nanoseconds: 10_000_000)
