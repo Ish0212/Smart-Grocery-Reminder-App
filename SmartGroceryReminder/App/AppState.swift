@@ -16,6 +16,8 @@ final class AppState: ObservableObject {
     let homeArrivalTimer: HomeArrivalTimerService
 
     private var cancellables = Set<AnyCancellable>()
+    /// Cleared once a session starts, so a late restore can't replace a manual sign-in.
+    private var canRestoreSession = true
 
     init(useMockBackend: Bool = true) {
         self.useMockBackend = useMockBackend
@@ -27,7 +29,7 @@ final class AppState: ObservableObject {
 
         self.isAuthenticated = false
         self.currentUser = nil
-        self.shoppingList = SampleData.groceryItems
+        self.shoppingList = useMockBackend ? SampleData.groceryItems : []
         self.preferences = .default
 
         bindServices()
@@ -103,10 +105,26 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Called at launch: a user still signed in from last time (Firebase only) skips the sign-in screen.
+    func restoreSession() {
+        authService.restoreSession { [weak self] user in
+            guard let self, self.canRestoreSession else { return }
+            self.canRestoreSession = false
+            self.currentUser = user
+            self.isAuthenticated = true
+            Task { try? await self.loadSession(for: user) }
+        }
+    }
+
     func signIn(email: String, password: String) async throws {
+        canRestoreSession = false
         let user = try await authService.signIn(email: email, password: password)
         currentUser = user
         isAuthenticated = true
+        try await loadSession(for: user)
+    }
+
+    private func loadSession(for user: AppUser) async throws {
         preferences = try await listService.fetchPreferences(userId: user.id)
         shoppingList = try await listService.fetchItems(userId: user.id)
         await notificationService.requestAuthorization()
@@ -115,6 +133,7 @@ final class AppState: ObservableObject {
     }
 
     func signUp(email: String, password: String, displayName: String) async throws {
+        canRestoreSession = false
         let user = try await authService.signUp(email: email, password: password, displayName: displayName)
         currentUser = user
         isAuthenticated = true

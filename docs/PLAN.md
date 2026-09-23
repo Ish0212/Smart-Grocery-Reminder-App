@@ -12,12 +12,12 @@ An iOS app that keeps grocery lists handy and uses location to remind you:
 | Area | Status |
 |------|--------|
 | SwiftUI list + add/complete/delete | Done (mock data) |
-| Auth screens + mock sign-in | Done (`demo@grocery.app` / `demo123`) |
+| Auth screens + sign-in | Done (Firebase email/password, or mock `demo@grocery.app` / `demo123`) |
 | Home-arrival timer + presets | Done |
 | Core Location geofencing service | Done (plus simulate buttons) |
 | Local notifications + actions | Done (**All brought in** / **Remind again** handled via `AppDelegate`) |
 | Reminder preferences (store toggle, repeat interval) | Done |
-| Firebase Auth / Firestore | Stubbed interfaces ready to wire |
+| Firebase Auth / Firestore | Implemented (used automatically when `GoogleService-Info.plist` is bundled; mock otherwise) |
 | Accessibility labels / Dynamic Type friendly layout | Baseline done |
 | Unit tests (XCTest) | Done (services + reminder policy) |
 | CI (GitHub Actions, macOS) | Done (`xcodegen` + `xcodebuild build test`) |
@@ -37,10 +37,9 @@ Views (SwiftUI)
 ### Data model (Firestore-shaped)
 
 ```
-users/{uid}
-  email, displayName
-  preferences/{doc}  → home, stores, reminder settings
-  items/{itemId}     → title, notes, aisle, isCompleted, timestamps
+users/{uid}                  (profile: email + displayName live in Firebase Auth)
+  preferences/main   → home, stores, reminder settings
+  items/{itemId}     → title, notes, aisle, isCompleted, createdAt, updatedAt
 ```
 
 ### Geofencing flow
@@ -60,13 +59,16 @@ users/{uid}
 
 ## Build phases
 
-### Phase 0 — Prototype (current)
+### Phase 0 — Prototype (done)
 - Mock auth/list, full UI, location + notification plumbing, simulator hooks
 
-### Phase 1 — Firebase
-- Add SPM Firebase packages + `GoogleService-Info.plist`
-- Flip `useMockBackend` to `false`
-- Security rules: users can only read/write their own `users/{uid}` tree
+### Phase 1 — Firebase (implemented; needs a Firebase project to run)
+- Firebase SDK 12 via SPM (`FirebaseAuth`, `FirebaseFirestore`), pinned in `project.yml`
+- `FirebaseBootstrap` configures Firebase when `GoogleService-Info.plist` is bundled; `AppDelegate` then builds `AppState` with the Firebase services
+- `FirebaseAuthService` (sign in / sign up / sign out, errors mapped to app messages) and `FirestoreShoppingListService` (items + preferences, offline-first writes)
+- Security rules in `firestore.rules`: users can only read/write their own `users/{uid}` tree
+- Signed-in users stay signed in across launches (`AppState.restoreSession()` at launch; waits for Firebase if the device was locked)
+- Follow-ups: rules unit tests with the Firebase emulator; make background geofence wakeups wait for the list to load before scheduling reminders
 
 ### Phase 2 — Polish
 - MapKit search for store addresses

@@ -18,6 +18,7 @@ playground.xcworkspace
 .swiftpm/
 Packages/
 Package.resolved
+.spm/
 *.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/
 
 # CocoaPods / Carthage
