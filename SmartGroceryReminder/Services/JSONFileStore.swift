@@ -40,11 +40,16 @@ struct JSONFileStore<Value: Codable> {
         try data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
     }
 
-    /// `Application Support/SmartGrocery/<fileName>` in the app's container.
+    /// A file in `AppFiles.directory`.
     static func appSupport(_ fileName: String) -> JSONFileStore<Value> {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return JSONFileStore(
-            url: base.appendingPathComponent("SmartGrocery", isDirectory: true).appendingPathComponent(fileName)
-        )
+        JSONFileStore(url: AppFiles.directory.appendingPathComponent(fileName))
+    }
+}
+
+enum AppFiles {
+    /// `Application Support/SmartGrocery/` in the app's container: the demo backend's data and the diagnostics log.
+    static var directory: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("SmartGrocery", isDirectory: true)
     }
 }

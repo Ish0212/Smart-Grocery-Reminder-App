@@ -8,7 +8,14 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     let appState: AppState = {
         // Firebase must be configured before AppState picks its backend.
         FirebaseBootstrap.configureIfAvailable()
-        let state = AppState(useMockBackend: !FirebaseBootstrap.isConfigured)
+        // Under XCTest the host app keeps everything in memory, so tests never restore a saved
+        // session (which would request permissions) or touch the device's saved data.
+        let isTesting = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+        let state = AppState(
+            useMockBackend: !FirebaseBootstrap.isConfigured,
+            mockStorageDirectory: isTesting ? nil : AppFiles.directory,
+            diagnostics: DiagnosticsLog(store: isTesting ? nil : JSONFileStore<[DiagnosticEntry]>.appSupport("diagnostics.json"))
+        )
         // With @UIApplicationDelegateAdaptor, UIApplication.shared.delegate is SwiftUI's own
         // delegate, so App Intents reach this state through AppState.shared instead.
         AppState.shared = state

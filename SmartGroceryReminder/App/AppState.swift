@@ -19,6 +19,7 @@ final class AppState: ObservableObject {
     let locationService: LocationService
     let notificationService: NotificationService
     let homeArrivalTimer: HomeArrivalTimerService
+    let diagnostics: DiagnosticsLog
 
     private var cancellables = Set<AnyCancellable>()
     /// Cleared once a session starts, so a late restore can't replace a manual sign-in.
@@ -26,17 +27,36 @@ final class AppState: ObservableObject {
     private var itemsSyncTask: Task<Void, Never>?
     private var preferencesSyncTask: Task<Void, Never>?
 
-    init(useMockBackend: Bool = true) {
+    /// - Parameters:
+    ///   - mockStorageDirectory: where the demo backend saves accounts, lists and preferences.
+    ///     `nil` (tests, previews) keeps them in memory.
+    ///   - diagnostics: the event log; the default keeps entries in memory.
+    init(
+        useMockBackend: Bool = true,
+        mockStorageDirectory: URL? = nil,
+        diagnostics: DiagnosticsLog = DiagnosticsLog()
+    ) {
         self.useMockBackend = useMockBackend
-        self.authService = useMockBackend ? MockAuthService() : FirebaseAuthService()
-        self.listService = useMockBackend ? MockShoppingListService() : FirestoreShoppingListService()
+        if useMockBackend {
+            self.authService = MockAuthService(
+                store: mockStorageDirectory.map { JSONFileStore<MockAuthSnapshot>(url: $0.appendingPathComponent("mock-auth.json")) }
+            )
+            self.listService = MockShoppingListService(
+                store: mockStorageDirectory.map { JSONFileStore<MockListSnapshot>(url: $0.appendingPathComponent("mock-list.json")) }
+            )
+        } else {
+            self.authService = FirebaseAuthService()
+            self.listService = FirestoreShoppingListService()
+        }
+        self.diagnostics = diagnostics
         self.locationService = LocationService()
         self.notificationService = NotificationService()
         self.homeArrivalTimer = HomeArrivalTimerService()
 
         self.isAuthenticated = false
         self.currentUser = nil
-        self.shoppingList = useMockBackend ? SampleData.groceryItems : []
+        // The list arrives from sync once a session starts.
+        self.shoppingList = []
         self.preferences = .default
 
         bindServices()
@@ -114,7 +134,8 @@ final class AppState: ObservableObject {
 
     // MARK: - Session
 
-    /// Called at launch: a user still signed in from last time (Firebase only) skips the sign-in screen.
+    /// Called at launch: a user still signed in from last time (Firebase, or the saved demo backend)
+    /// skips the sign-in screen.
     func restoreSession() {
         authService.restoreSession { [weak self] user in
             guard let self, self.canRestoreSession else { return }

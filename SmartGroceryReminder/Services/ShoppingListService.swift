@@ -1,16 +1,43 @@
 import Foundation
 import FirebaseFirestore
 
-/// In-memory backend. Observers stand in for Firestore snapshot listeners.
+struct MockListSnapshot: Codable {
+    var itemsByUser: [String: [GroceryItem]]
+    var preferencesByUser: [String: UserPreferences]
+
+    /// What a fresh install starts with: the demo account's sample list.
+    static let seed = MockListSnapshot(
+        itemsByUser: ["demo-user": SampleData.groceryItems],
+        preferencesByUser: ["demo-user": .default]
+    )
+}
+
+/// Demo backend. With a store, lists and preferences are saved on the device; without one
+/// (tests, previews) they live in memory. Observers stand in for Firestore snapshot listeners.
 actor MockShoppingListService: ShoppingListServiceProtocol {
-    private var itemsByUser: [String: [GroceryItem]] = [
-        "demo-user": SampleData.groceryItems
-    ]
-    private var preferencesByUser: [String: UserPreferences] = [
-        "demo-user": .default
-    ]
+    private var itemsByUser: [String: [GroceryItem]]
+    private var preferencesByUser: [String: UserPreferences]
+    private let store: JSONFileStore<MockListSnapshot>?
+    /// False when a saved file exists but couldn't be read, so it is never overwritten.
+    private let canSave: Bool
     private var itemObservers: [(userId: String, continuation: AsyncThrowingStream<[GroceryItem], Error>.Continuation)] = []
     private var preferenceObservers: [(userId: String, continuation: AsyncThrowingStream<UserPreferences, Error>.Continuation)] = []
+
+    init(store: JSONFileStore<MockListSnapshot>? = nil) {
+        var snapshot = MockListSnapshot.seed
+        var canSave = store != nil
+        if let store {
+            switch store.load() {
+            case .loaded(let saved): snapshot = saved
+            case .missing, .corrupt: break
+            case .unreadable: canSave = false
+            }
+        }
+        itemsByUser = snapshot.itemsByUser
+        preferencesByUser = snapshot.preferencesByUser
+        self.store = store
+        self.canSave = canSave
+    }
 
     func observeItems(userId: String) -> AsyncThrowingStream<[GroceryItem], Error> {
         let (stream, continuation) = AsyncThrowingStream<[GroceryItem], Error>.makeStream(bufferingPolicy: .bufferingNewest(1))
@@ -27,11 +54,13 @@ actor MockShoppingListService: ShoppingListServiceProtocol {
             items.insert(item, at: 0)
         }
         itemsByUser[userId] = items
+        persist()
         publishItems(for: userId)
     }
 
     func delete(itemId: String, userId: String) async throws {
         itemsByUser[userId]?.removeAll { $0.id == itemId }
+        persist()
         publishItems(for: userId)
     }
 
@@ -44,9 +73,15 @@ actor MockShoppingListService: ShoppingListServiceProtocol {
 
     func savePreferences(_ preferences: UserPreferences, userId: String) async throws {
         preferencesByUser[userId] = preferences
+        persist()
         for observer in preferenceObservers where observer.userId == userId {
             observer.continuation.yield(preferences)
         }
+    }
+
+    private func persist() {
+        guard canSave, let store else { return }
+        try? store.save(MockListSnapshot(itemsByUser: itemsByUser, preferencesByUser: preferencesByUser))
     }
 
     private func publishItems(for userId: String) {
