@@ -79,10 +79,10 @@ users/{uid}                  (profile: email + displayName live in Firebase Auth
 - App Intents quick-add (Siri / Shortcuts / Spotlight)
 - Deferred: home-screen widget (needs an extension + App Group), Family Sharing lists (needs a shared-list data model)
 
-### Phase 3 — Hardening
-- Background location reliability testing
-- Privacy nutrition labels / App Store copy
-- Analytics (opt-in) for reminder effectiveness
+### Phase 3 — Hardening (in progress — plan: [phase-3-plan.md](phase-3-plan.md); device testing: [iphone-testing.md](iphone-testing.md))
+- PR 1: background/relaunch reliability (region IDs survive relaunch, events wait for data, persisted mock backend) + Diagnostics screen
+- PR 2: privacy manifest, App Store privacy label + listing copy, on-device reminder stats (no data leaves the phone)
+- PR 3: Firestore rules tests on the emulator (Linux CI)
 
 ## Privacy notes
 

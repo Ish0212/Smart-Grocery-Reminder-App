@@ -47,3 +47,6 @@ Icon?
 
 # Archives
 *.xcarchive
+
+# graphify knowledge graph output
+graphify-out/
