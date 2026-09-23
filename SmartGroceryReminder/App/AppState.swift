@@ -8,6 +8,11 @@ final class AppState: ObservableObject {
     @Published var shoppingList: [GroceryItem]
     @Published var preferences: UserPreferences
     @Published var useMockBackend: Bool
+    /// True once the signed-in user's saved preferences have arrived. Until then `preferences`
+    /// holds defaults, so nothing is saved (it would overwrite the real ones).
+    @Published private(set) var preferencesLoaded = false
+    /// Set when live sync with the backend fails (e.g. Firestore rules deny access).
+    @Published private(set) var syncErrorMessage: String?
 
     let authService: AuthServiceProtocol
     let listService: ShoppingListServiceProtocol
@@ -18,6 +23,8 @@ final class AppState: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     /// Cleared once a session starts, so a late restore can't replace a manual sign-in.
     private var canRestoreSession = true
+    private var itemsSyncTask: Task<Void, Never>?
+    private var preferencesSyncTask: Task<Void, Never>?
 
     init(useMockBackend: Bool = true) {
         self.useMockBackend = useMockBackend
@@ -105,52 +112,100 @@ final class AppState: ObservableObject {
         }
     }
 
+    // MARK: - Session
+
     /// Called at launch: a user still signed in from last time (Firebase only) skips the sign-in screen.
     func restoreSession() {
         authService.restoreSession { [weak self] user in
             guard let self, self.canRestoreSession else { return }
-            self.canRestoreSession = false
-            self.currentUser = user
-            self.isAuthenticated = true
-            Task { try? await self.loadSession(for: user) }
+            self.startSession(for: user)
         }
     }
 
     func signIn(email: String, password: String) async throws {
         canRestoreSession = false
         let user = try await authService.signIn(email: email, password: password)
-        currentUser = user
-        isAuthenticated = true
-        try await loadSession(for: user)
-    }
-
-    private func loadSession(for user: AppUser) async throws {
-        preferences = try await listService.fetchPreferences(userId: user.id)
-        shoppingList = try await listService.fetchItems(userId: user.id)
-        await notificationService.requestAuthorization()
-        locationService.requestAuthorization()
-        locationService.startMonitoring(home: preferences.homeLocation, stores: preferences.savedStores)
+        startSession(for: user)
     }
 
     func signUp(email: String, password: String, displayName: String) async throws {
         canRestoreSession = false
         let user = try await authService.signUp(email: email, password: password, displayName: displayName)
-        currentUser = user
-        isAuthenticated = true
-        preferences = .default
-        shoppingList = []
-        await notificationService.requestAuthorization()
-        locationService.requestAuthorization()
-        locationService.startMonitoring(home: preferences.homeLocation, stores: preferences.savedStores)
+        startSession(for: user)
     }
 
     func signOut() {
         authService.signOut()
+        stopSync()
         isAuthenticated = false
         currentUser = nil
+        // Don't leave this account's list or places on screen for whoever signs in next.
+        shoppingList = []
+        preferences = .default
         locationService.stopMonitoring()
         homeArrivalTimer.cancel()
     }
+
+    private func startSession(for user: AppUser) {
+        canRestoreSession = false
+        currentUser = user
+        isAuthenticated = true
+        startSync(for: user)
+        Task {
+            await self.notificationService.requestAuthorization()
+            self.locationService.requestAuthorization()
+        }
+    }
+
+    // MARK: - Sync
+
+    /// Streams the user's list and preferences into published state until `stopSync()`.
+    /// Geofences are (re)armed whenever the preferences arrive or change.
+    func startSync(for user: AppUser) {
+        stopSync()
+        itemsSyncTask = Task { [weak self, listService] in
+            do {
+                for try await items in await listService.observeItems(userId: user.id) {
+                    // A value buffered before sign-out must not bring the old list back.
+                    guard !Task.isCancelled else { return }
+                    self?.shoppingList = items
+                }
+            } catch {
+                guard !Task.isCancelled else { return }
+                self?.syncErrorMessage = "Couldn't sync your list: \(error.localizedDescription)"
+            }
+        }
+        preferencesSyncTask = Task { [weak self, listService] in
+            do {
+                for try await preferences in await listService.observePreferences(userId: user.id) {
+                    guard !Task.isCancelled else { return }
+                    self?.applyLoadedPreferences(preferences)
+                }
+            } catch {
+                guard !Task.isCancelled else { return }
+                self?.syncErrorMessage = "Couldn't sync your settings: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func applyLoadedPreferences(_ loaded: UserPreferences) {
+        // Echoes of our own saves (and Firestore metadata-only updates) change nothing.
+        guard !preferencesLoaded || loaded != preferences else { return }
+        preferences = loaded
+        preferencesLoaded = true
+        locationService.startMonitoring(home: loaded.homeLocation, stores: loaded.savedStores)
+    }
+
+    private func stopSync() {
+        itemsSyncTask?.cancel()
+        preferencesSyncTask?.cancel()
+        itemsSyncTask = nil
+        preferencesSyncTask = nil
+        preferencesLoaded = false
+        syncErrorMessage = nil
+    }
+
+    // MARK: - Editing
 
     func addItem(_ title: String, notes: String = "", aisle: String = "") async {
         let item = GroceryItem(title: title, notes: notes, aisle: aisle)
@@ -176,8 +231,47 @@ final class AppState: ObservableObject {
         }
     }
 
+    // MARK: - Siri & Shortcuts
+
+    /// The running app's state, for entry points outside SwiftUI (App Intents). Set by `AppDelegate`.
+    static weak var shared: AppState?
+
+    /// Adds an item from Siri / Shortcuts and returns the trimmed title that was added.
+    func quickAdd(_ rawTitle: String) async throws -> String {
+        let title = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else { throw QuickAddError.emptyItem }
+        guard isAuthenticated else { throw QuickAddError.notSignedIn }
+        await addItem(title)
+        return title
+    }
+
+    // MARK: - Places
+
+    /// iOS monitors at most 20 regions per app; one is kept for home.
+    static let maxStores = 19
+
+    enum AddStoreResult: Equatable {
+        case added, duplicate, limitReached
+    }
+
+    /// Adds a store unless one is already saved within 50 m or the geofence limit is reached.
+    func addStore(_ store: GeoPlace) async -> AddStoreResult {
+        if preferences.savedStores.contains(where: { $0.distance(to: store) < 50 }) {
+            return .duplicate
+        }
+        guard preferences.savedStores.count < Self.maxStores else { return .limitReached }
+        preferences.savedStores.append(store)
+        await savePreferences()
+        return .added
+    }
+
+    func setHome(_ home: GeoPlace) async {
+        preferences.homeLocation = home
+        await savePreferences()
+    }
+
     func savePreferences() async {
-        guard let userId = currentUser?.id else { return }
+        guard preferencesLoaded, let userId = currentUser?.id else { return }
         try? await listService.savePreferences(preferences, userId: userId)
         locationService.startMonitoring(home: preferences.homeLocation, stores: preferences.savedStores)
         await notificationService.rescheduleRepeatingReminders(preferences: preferences, items: shoppingList)

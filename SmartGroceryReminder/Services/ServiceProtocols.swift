@@ -26,10 +26,12 @@ protocol AuthServiceProtocol {
 }
 
 protocol ShoppingListServiceProtocol {
-    func fetchItems(userId: String) async throws -> [GroceryItem]
+    /// Emits the user's items (from the local cache first when offline), then again on every change.
+    func observeItems(userId: String) async -> AsyncThrowingStream<[GroceryItem], Error>
     func upsert(item: GroceryItem, userId: String) async throws
     func delete(itemId: String, userId: String) async throws
-    func fetchPreferences(userId: String) async throws -> UserPreferences
+    /// Emits the user's preferences once they are known, then again on every change.
+    func observePreferences(userId: String) async -> AsyncThrowingStream<UserPreferences, Error>
     func savePreferences(_ preferences: UserPreferences, userId: String) async throws
 }
 

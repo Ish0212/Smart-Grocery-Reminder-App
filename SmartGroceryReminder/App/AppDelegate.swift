@@ -8,7 +8,11 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     let appState: AppState = {
         // Firebase must be configured before AppState picks its backend.
         FirebaseBootstrap.configureIfAvailable()
-        return AppState(useMockBackend: !FirebaseBootstrap.isConfigured)
+        let state = AppState(useMockBackend: !FirebaseBootstrap.isConfigured)
+        // With @UIApplicationDelegateAdaptor, UIApplication.shared.delegate is SwiftUI's own
+        // delegate, so App Intents reach this state through AppState.shared instead.
+        AppState.shared = state
+        return state
     }()
 
     func application(

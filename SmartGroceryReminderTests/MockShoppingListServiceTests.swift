@@ -2,9 +2,19 @@ import XCTest
 @testable import SmartGroceryReminder
 
 final class MockShoppingListServiceTests: XCTestCase {
+    /// The first value a stream emits: the current state.
+    private func current<T>(_ stream: AsyncThrowingStream<T, Error>) async throws -> T? {
+        try await stream.first { _ in true }
+    }
+
     func testDemoUserStartsWithSampleItems() async throws {
-        let items = try await MockShoppingListService().fetchItems(userId: "demo-user")
-        XCTAssertEqual(items.count, SampleData.groceryItems.count)
+        let items = try await current(await MockShoppingListService().observeItems(userId: "demo-user"))
+        XCTAssertEqual(items, SampleData.groceryItems)
+    }
+
+    func testUnknownUserStartsWithEmptyList() async throws {
+        let items = try await current(await MockShoppingListService().observeItems(userId: "someone-else"))
+        XCTAssertEqual(items, [])
     }
 
     func testUpsertInsertsNewItemAtFront() async throws {
@@ -12,18 +22,18 @@ final class MockShoppingListServiceTests: XCTestCase {
         let item = GroceryItem(title: "Apples")
         try await service.upsert(item: item, userId: "demo-user")
 
-        let items = try await service.fetchItems(userId: "demo-user")
+        let items = try await current(await service.observeItems(userId: "demo-user")) ?? []
         XCTAssertEqual(items.first, item)
         XCTAssertEqual(items.count, SampleData.groceryItems.count + 1)
     }
 
     func testUpsertReplacesExistingItemInPlace() async throws {
         let service = MockShoppingListService()
-        var item = try await service.fetchItems(userId: "demo-user")[2]
+        var item = SampleData.groceryItems[2]
         item.isCompleted = true
         try await service.upsert(item: item, userId: "demo-user")
 
-        let items = try await service.fetchItems(userId: "demo-user")
+        let items = try await current(await service.observeItems(userId: "demo-user")) ?? []
         XCTAssertEqual(items.count, SampleData.groceryItems.count)
         XCTAssertEqual(items[2], item)
     }
@@ -33,23 +43,44 @@ final class MockShoppingListServiceTests: XCTestCase {
         let target = SampleData.groceryItems[0]
         try await service.delete(itemId: target.id, userId: "demo-user")
 
-        let items = try await service.fetchItems(userId: "demo-user")
+        let items = try await current(await service.observeItems(userId: "demo-user")) ?? []
         XCTAssertFalse(items.contains { $0.id == target.id })
     }
 
+    func testObserverReceivesEveryChange() async throws {
+        let service = MockShoppingListService()
+        var updates = await service.observeItems(userId: "u1").makeAsyncIterator()
+        let initial = try await updates.next()
+        XCTAssertEqual(initial, [])
+
+        let item = GroceryItem(title: "Apples")
+        try await service.upsert(item: item, userId: "u1")
+        let afterUpsert = try await updates.next()
+        XCTAssertEqual(afterUpsert, [item])
+
+        try await service.delete(itemId: item.id, userId: "u1")
+        let afterDelete = try await updates.next()
+        XCTAssertEqual(afterDelete, [])
+    }
+
     func testUnknownUserGetsDefaultPreferences() async throws {
-        let prefs = try await MockShoppingListService().fetchPreferences(userId: "someone-else")
+        let prefs = try await current(await MockShoppingListService().observePreferences(userId: "someone-else"))
         XCTAssertEqual(prefs, .default)
     }
 
-    func testSavedPreferencesRoundTrip() async throws {
+    func testPreferenceObserverReceivesSaves() async throws {
         let service = MockShoppingListService()
+        var updates = await service.observePreferences(userId: "u1").makeAsyncIterator()
+        _ = try await updates.next()
+
         var prefs = UserPreferences.default
         prefs.homeArrivalDelay = 5 * 60
         prefs.storeEntryReminderEnabled = false
         try await service.savePreferences(prefs, userId: "u1")
 
-        let fetched = try await service.fetchPreferences(userId: "u1")
-        XCTAssertEqual(fetched, prefs)
+        let saved = try await updates.next()
+        XCTAssertEqual(saved, prefs)
+        let refetched = try await current(await service.observePreferences(userId: "u1"))
+        XCTAssertEqual(refetched, prefs)
     }
 }

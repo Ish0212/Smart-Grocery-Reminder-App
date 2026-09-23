@@ -6,9 +6,11 @@ SwiftUI prototype for location-aware grocery lists and home-arrival “unload th
 
 - Shopping list with add / complete / delete
 - Email/password sign-in: Firebase Auth, or the mock backend (`demo@grocery.app` / `demo123`)
-- List and preferences synced to Firestore (offline-first), or kept in memory in mock mode
+- List and preferences synced live with Firestore (loads from the local cache offline, updates across devices), or kept in memory in mock mode
 - Customizable home-arrival unload timer (5–30 minutes)
 - Core Location geofencing service for home + grocery stores
+- Apple Maps search to add grocery stores or set your home address (up to 19 stores, the iOS geofence limit)
+- Siri / Shortcuts / Spotlight: “Add an item to Smart Grocery” without opening the app
 - Local notifications: daily list, store entry, car-unload (+ repeat / completion actions)
 - Settings for reminder preferences
 - Simulator hooks to fake store entry and home arrival
@@ -50,6 +52,16 @@ open SmartGroceryReminder.xcodeproj
 3. Set the target’s Info.plist to `SmartGroceryReminder/Info.plist` (or merge the location usage strings)
 4. Build & run
 
+### Install on an iPhone from Windows (no Mac)
+
+CI can build an unsigned `.ipa` that [Sideloadly](https://sideloadly.io) signs with your Apple ID and installs over USB. A free Apple ID works; the install expires after 7 days and must be re-signed.
+
+1. **Build:** Actions tab → **iOS CI** → **Run workflow** → pick the branch, tick **device_ipa** (or `gh workflow run ios-ci.yml --ref <branch> -f device_ipa=true`). Download the `SmartGroceryReminder-unsigned-ipa` artifact and unzip it.
+2. **Windows prerequisites:** install **iTunes** and **iCloud** from apple.com (not the Microsoft Store versions), then install Sideloadly.
+3. **Install:** connect the iPhone by USB and tap **Trust**. In Sideloadly, pick the phone, enter your Apple ID, drop in the `.ipa` and press **Start** (enter the 2FA code when asked). If it says the bundle ID isn't available, open **Advanced options** and change the bundle ID (e.g. add your initials).
+4. **On the iPhone:** Settings → Privacy & Security → **Developer Mode** → on (the phone restarts). Then Settings → General → **VPN & Device Management** → trust your Apple ID's developer app.
+5. Open **Smart Grocery**. Without a `GoogleService-Info.plist` the build uses the mock backend: sign in with the demo account below. Allow notifications and choose **Always** for location so geofences work in the background.
+
 ### Running tests
 
 ```bash
@@ -73,13 +85,15 @@ Or press **⌘U** in Xcode.
 SmartGroceryReminder/
   App/AppState.swift
   Models/Models.swift
-  Services/          # auth, list, location, notifications, timer
+  Services/          # auth, list sync, location, place search, notifications, timer
+  Intents/           # Siri / Shortcuts (App Intents)
   Views/             # auth, list, arrival, places, settings
   Assets.xcassets
   Info.plist
 SmartGroceryReminderTests/  # XCTest unit tests
 .github/workflows/   # iOS CI
 docs/PLAN.md         # architecture & phased roadmap
+docs/phase-2-plan.md # Phase 2 (Polish) plan
 project.yml          # XcodeGen spec
 firestore.rules      # Firestore security rules
 firebase.json        # Firebase CLI config (deploys the rules)
@@ -100,6 +114,10 @@ To use a real Firebase project:
 With Firebase, users stay signed in across launches. Data is stored under `users/{uid}`: `items/{itemId}` for list items and `preferences/main` for reminder settings. The rules only let a signed-in user read and write their own tree.
 
 See [docs/PLAN.md](docs/PLAN.md) for data shape, geofence flow, and privacy notes.
+
+## Siri & Shortcuts
+
+The app ships an App Intent, **Add Grocery Item**, plus App Shortcuts, so you can say “Add an item to Smart Grocery” (or run it from the Shortcuts app / Spotlight). Siri asks for the item and adds it to your list. It runs in the app's process without opening the app. You must be signed in: with Firebase the session is restored automatically; in mock mode the app must already be running and signed in.
 
 ## Privacy / permissions
 
