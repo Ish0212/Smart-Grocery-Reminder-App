@@ -18,6 +18,12 @@ struct ShoppingListView: View {
     var body: some View {
         NavigationStack {
             List {
+                if let syncError = appState.syncErrorMessage {
+                    Label(syncError, systemImage: "exclamationmark.icloud")
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
+                }
+
                 if openItems.isEmpty && doneItems.isEmpty {
                     ContentUnavailableView(
                         "List is empty",
