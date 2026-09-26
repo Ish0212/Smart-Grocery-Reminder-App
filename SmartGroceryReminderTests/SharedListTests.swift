@@ -203,11 +203,14 @@ final class AppStateSharedListTests: XCTestCase {
         try await state.listService.upsert(item: GroceryItem(title: "Milk"), listId: "bob")
         try await waitUntil { state.shoppingList.count == 1 }
 
+        // Sync echoes each save back, so wait for the list to settle after each toggle.
         await state.toggleItem(state.shoppingList[0])
-        XCTAssertEqual(state.shoppingList[0].completedBy, "bob")
+        try await waitUntil { state.shoppingList.first?.completedBy == "bob" }
+        let saved = try await state.listService.observeItems(listId: "bob").first { _ in true }
+        XCTAssertEqual(saved?.first?.completedBy, "bob")
 
         await state.toggleItem(state.shoppingList[0])
-        XCTAssertNil(state.shoppingList[0].completedBy)
+        try await waitUntil { state.shoppingList.first.map { !$0.isCompleted && $0.completedBy == nil } == true }
         state.signOut()
     }
 
