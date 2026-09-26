@@ -88,5 +88,5 @@ See [phase-3-plan.md](phase-3-plan.md):
 
 **Phase 5** ([phase-5-plan.md](phase-5-plan.md)): a home-screen widget. Long-press the home screen → **+** → **Smart Grocery**.
 - It shows the open items, or the unload countdown with a **Brought in** button.
-- It shares data with the app through an **App Group**. Sideloadly signs the widget along with the app; if you changed the bundle ID, it renames the widget's ID too.
+- It shares data with the app through an **App Group**. Sideloadly should sign the widget along with the app (and, if you changed the bundle ID, rename the widget's ID to match). After installing, check that **Smart Grocery** appears in the widget gallery.
 - **If the widget only says "Open Smart Grocery to see your list"** while you're signed in, the free-account signing dropped the App Group. The app itself is unaffected; everything else in this guide still works. Try a Sideloadly update or a paid developer account if you want the widget.

@@ -67,6 +67,7 @@ final class AppTabTests: XCTestCase {
 }
 
 final class AppStateWidgetTests: XCTestCase {
+    @MainActor
     func testSnapshotListsOnlyOpenItems() {
         let items = [GroceryItem(title: "Milk"), GroceryItem(title: "Eggs", isCompleted: true), GroceryItem(title: "Bread")]
         let snapshot = AppState.widgetSnapshot(items: items, isSignedIn: true, unloadEndDate: nil)
@@ -74,6 +75,7 @@ final class AppStateWidgetTests: XCTestCase {
         XCTAssertEqual(snapshot.openCount, 2)
     }
 
+    @MainActor
     func testSignedOutSnapshotHidesTheList() {
         let snapshot = AppState.widgetSnapshot(items: [GroceryItem(title: "Milk")], isSignedIn: false, unloadEndDate: nil)
         XCTAssertEqual(snapshot, .signedOut)
