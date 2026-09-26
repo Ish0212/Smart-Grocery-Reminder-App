@@ -293,7 +293,7 @@ final class FirestoreShoppingListService: ShoppingListServiceProtocol {
                     "memberIds": FieldValue.arrayUnion([userId]),
                     "joinCode": code,
                 ])
-            } catch {
+            } catch let error as FirestoreErrorCode where error.code == .permissionDenied {
                 // The invite checked out, so a denial here means the list is full.
                 throw SharedListError.listFull
             }

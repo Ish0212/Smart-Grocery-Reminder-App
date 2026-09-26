@@ -28,9 +28,11 @@ service cloud.firestore {
       allow delete: if false;
 
       // Items must match GroceryItem's Codable keys (pinned in ModelKeysTests.swift).
+      // The owner (listId == uid) needs no lookup. That also lets the migration batch create the
+      // list and its items together: in a batch, get() still sees the list as missing.
       match /items/{itemId} {
-        allow read, delete: if isListMember(listId);
-        allow create, update: if isListMember(listId) && isValidItem(request.resource.data, itemId);
+        allow read, delete: if isOwner(listId) || isListMember(listId);
+        allow create, update: if (isOwner(listId) || isListMember(listId)) && isValidItem(request.resource.data, itemId);
       }
     }
 

@@ -39,7 +39,7 @@ users/{uid}                   activeListId
     - (b) a member removing only themselves;
     - (c) a non-member adding only themselves (and setting `joinCode`), where `invites/{joinCode}` points at this list and hasn't expired, and the list stays at 10 members or fewer.
   - **delete:** never.
-- `lists/{listId}/items/{itemId}`: members of the list. Writes go through the existing `isValidItem`.
+- `lists/{listId}/items/{itemId}`: the owner (`listId == auth.uid`, no lookup) or members of the list. Writes go through the existing `isValidItem`.
 - `invites/{code}`:
   - **get:** any signed-in user.
   - **create:** only for your own list (`listId == createdBy == auth.uid`), with `expiresAt` within 8 days.
@@ -69,7 +69,8 @@ users/{uid}                   activeListId
    - an invite for your own list can be created, but not one for someone else's;
    - invites can't be listed;
    - the 10-member cap holds;
-   - legacy `users/{uid}/items` stays readable by the owner.
+   - legacy `users/{uid}/items` stays readable by the owner;
+   - **the migration batch, run as the user, succeeds.** Rules `get()` sees the state before a batch, so item writes can't depend on the list document the same batch creates. The owner is recognized by `listId == uid` instead. Someone else can't run the batch into your list.
 2. **Mock service:**
    - resolve creates your own list and is idempotent;
    - invite → join → both users see the same items stream;

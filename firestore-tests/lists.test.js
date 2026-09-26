@@ -13,6 +13,7 @@ import {
   setDoc,
   Timestamp,
   updateDoc,
+  writeBatch,
 } from "firebase/firestore";
 
 let env;
@@ -187,6 +188,26 @@ describe("leaving and managing members", () => {
 });
 
 describe("legacy personal items", () => {
+  // The exact batch FirestoreShoppingListService.createOwnList commits, as the user. Rules get()
+  // sees the state before the batch, so this fails if item writes need an existing list document.
+  test("the migration batch succeeds as the user", async () => {
+    await seed("users/alice/items/item-1", item());
+    const db = as("alice");
+    const batch = writeBatch(db);
+    batch.set(doc(db, "lists/alice"), { ownerId: "alice", memberIds: ["alice"] });
+    batch.set(doc(db, "lists/alice/items/item-1"), item());
+    batch.set(doc(db, "users/alice"), { activeListId: "alice" }, { merge: true });
+    await assertSucceeds(batch.commit());
+  });
+
+  test("nobody else can run a migration into your list", async () => {
+    const db = as("bob");
+    const batch = writeBatch(db);
+    batch.set(doc(db, "lists/alice"), { ownerId: "alice", memberIds: ["alice"] });
+    batch.set(doc(db, "lists/alice/items/item-1"), item());
+    await assertFails(batch.commit());
+  });
+
   test("stay readable by their owner for migration", async () => {
     await seed("users/alice/items/item-1", item());
     await assertSucceeds(getDocs(collection(as("alice"), "users/alice/items")));

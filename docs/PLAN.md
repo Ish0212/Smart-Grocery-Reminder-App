@@ -110,7 +110,7 @@ invites/{code}               listId, createdBy, expiresAt
 - Each user owns one list (ID = uid); invite family with an 8-character code (7-day expiry, max 10 members); leave to go back to your own list
 - The active list is followed live from `users/{uid}`; existing items migrate into `lists/{uid}` in one atomic batch
 - Reminders stay personal: only your own check-offs (`completedBy`) count toward your unload reminder
-- Rules + 18 new emulator tests for lists, invites, joining and leaving
+- Rules + 20 new emulator tests for lists, invites, joining, leaving and the migration batch
 
 ## Privacy notes
 
