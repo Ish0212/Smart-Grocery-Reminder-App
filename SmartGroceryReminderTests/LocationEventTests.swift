@@ -76,6 +76,42 @@ final class LocationEventTests: XCTestCase {
         ) else { return XCTFail("Expected the home enter to schedule") }
     }
 
+    /// Unload, then walk the dog: re-entering home later must not ask about groceries already inside.
+    @MainActor
+    func testReEnteringHomeAfterUnloadingDoesNotRemindAgain() {
+        let arrival = now.addingTimeInterval(-50 * 60)
+        let done = now.addingTimeInterval(-38 * 60)
+        let boughtBeforeDone = [GroceryItem(title: "Milk", isCompleted: true, updatedAt: arrival.addingTimeInterval(-30 * 60))]
+
+        guard case .ignore = AppState.decision(
+            for: event(), preferences: .default, items: boughtBeforeDone, now: now,
+            lastHandled: arrival, lastUnloadDone: done
+        ) else { return XCTFail("Expected ignore") }
+
+        let boughtAfterDone = boughtBeforeDone + [GroceryItem(title: "Bread", isCompleted: true, updatedAt: done.addingTimeInterval(20 * 60))]
+        guard case .scheduleUnload(_, let itemCount, _, _) = AppState.decision(
+            for: event(), preferences: .default, items: boughtAfterDone, now: now,
+            lastHandled: arrival, lastUnloadDone: done
+        ) else { return XCTFail("Expected scheduleUnload") }
+        XCTAssertEqual(itemCount, 1)
+    }
+
+    @MainActor
+    func testUnloadDoneStartsTheHomeCooldown() {
+        guard case .ignore = AppState.decision(
+            for: event(), preferences: .default, items: items, now: now,
+            lastHandled: now.addingTimeInterval(-60 * 60), lastUnloadDone: now.addingTimeInterval(-5 * 60)
+        ) else { return XCTFail("Expected ignore") }
+    }
+
+    @MainActor
+    func testUnloadDoneDoesNotAffectStores() {
+        guard case .notifyStore = AppState.decision(
+            for: event(.groceryStore), preferences: .default, items: items, now: now,
+            lastUnloadDone: now.addingTimeInterval(-60)
+        ) else { return XCTFail("Expected notifyStore") }
+    }
+
     @MainActor
     func testSimulatedEventsSkipTheCooldown() {
         var simulated = event()

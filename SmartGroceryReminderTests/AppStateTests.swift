@@ -55,29 +55,39 @@ final class AppStateTests: XCTestCase {
     }
 
     @MainActor
-    func testMarkDoneStartsTheHomeCooldownAndItIsSaved() async throws {
+    func testMarkDoneIsSavedForTheNextLaunch() async throws {
         let directory = temporaryFileURL("state").deletingLastPathComponent()
         let now = Date(timeIntervalSince1970: 2_000_000)
         let state = AppState(stateDirectory: directory)
-        let homeId = try XCTUnwrap(state.preferences.homeLocation?.id)
 
         state.markUnloadComplete(source: "test", now: now)
 
-        XCTAssertEqual(state.lastHandledDate(.home, homeId), now)
-        XCTAssertEqual(AppState(stateDirectory: directory).lastHandledDate(.home, homeId), now)
+        XCTAssertEqual(state.lastUnloadDone, now)
+        XCTAssertEqual(AppState(stateDirectory: directory).lastUnloadDone, now)
     }
 
     @MainActor
     func testSignOutClearsCooldowns() async throws {
         let directory = temporaryFileURL("state").deletingLastPathComponent()
         let state = AppState(stateDirectory: directory)
-        let homeId = try XCTUnwrap(state.preferences.homeLocation?.id)
         state.markUnloadComplete(source: "test")
 
         state.signOut()
 
-        XCTAssertNil(state.lastHandledDate(.home, homeId))
-        XCTAssertNil(AppState(stateDirectory: directory).lastHandledDate(.home, homeId))
+        XCTAssertNil(state.lastUnloadDone)
+        XCTAssertNil(AppState(stateDirectory: directory).lastUnloadDone)
+    }
+
+    @MainActor
+    func testItemsCheckedOffBeforeTheLastUnloadAreAlreadyInside() async throws {
+        let now = Date()
+        let done = now.addingTimeInterval(-60 * 60)
+        let items = [
+            GroceryItem(title: "Brought in", isCompleted: true, updatedAt: done.addingTimeInterval(-10 * 60)),
+            GroceryItem(title: "Bought since", isCompleted: true, updatedAt: done.addingTimeInterval(10 * 60)),
+        ]
+        let plan = try XCTUnwrap(AppState.carUnloadReminderPlan(preferences: .default, items: items, now: now, lastUnloadDone: done))
+        XCTAssertEqual(plan.itemCount, 1)
     }
 
     @MainActor

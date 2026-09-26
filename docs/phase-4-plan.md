@@ -11,9 +11,9 @@ The Phase 3 review left four reminder issues for later. Three of them change wha
 
 | # | Task | Acceptance criteria | Tests |
 |---|---|---|---|
-| R2 | **Remind about what you just bought.** Items checked off in the last 3 hours count as "in the car". The unload reminder uses that count when there is one, otherwise the unchecked count (the old behavior). | Checking everything off at the store and driving home still sends the unload reminder. Items checked off long ago don't. | `carUnloadReminderPlan` cases: recently bought, old purchases, unchecked fallback, nothing at all. |
+| R2 | **Remind about what you just bought.** Items checked off in the last 3 hours, and after the last "All brought in", count as "in the car". The unload reminder uses that count when there is one, otherwise the unchecked count (the old behavior). | Checking everything off at the store and driving home still sends the unload reminder. Items checked off long ago, or already brought in, don't. | `carUnloadReminderPlan` cases: recently bought, old purchases, already brought in, unchecked fallback, clock skew, nothing at all. |
 | R4 | **Countdown survives a relaunch.** `HomeArrivalTimerService` saves the countdown's end date and restores it at launch. | After iOS kills and relaunches the app, the Arrival tab shows the remaining time instead of nothing. Finished or cancelled countdowns aren't restored. | Restore running; don't restore expired; cancel clears the file. |
-| R5 | **Enter/exit flapping cooldown.** A real (not simulated) enter for a place already handled recently is ignored: 15 min for home, 60 min per store. The last handled time per place is saved on the device. | GPS jitter at the edge of home doesn't restart the countdown or re-arm a reminder after "All brought in". Simulator buttons are never blocked. | Decision cases inside/outside the cooldown, per store, simulated events, and persistence across instances. |
+| R5 | **Enter/exit flapping cooldown.** A real (not simulated) enter for a place already handled recently is ignored: 15 min for home (from the last arrival reminder or "All brought in", whichever is later), 60 min per store. Saved on the device. | GPS jitter at the edge of home doesn't restart the countdown or re-arm a reminder after "All brought in"; re-entering home later (walking the dog) doesn't ask about groceries already inside. Simulator buttons are never blocked. | Decision cases inside/outside the cooldown, per store, unload-done, walk-the-dog, simulated events, persistence across instances, sign-out. |
 | — | **CLMonitor decision.** | A written note in this doc. | — |
 
 ## CLMonitor decision
@@ -22,7 +22,8 @@ The Phase 3 review left four reminder issues for later. Three of them change wha
 
 ## Design notes
 
-- The cooldown, like the rest of the policy, is a parameter of the pure `AppState.decision(for:…, lastHandled:)`. `AppState` keeps the last handled time per region ID in `reminder-cooldowns.json`, recorded only when a reminder is scheduled or sent.
+- The cooldown, like the rest of the policy, is a parameter of the pure `AppState.decision(for:…, lastHandled:, lastUnloadDone:)`. `AppState` keeps `ReminderCooldowns` in `reminder-cooldowns.json`: the last reminder time per region ID (recorded only when a reminder is scheduled or sent) and one `lastUnloadDone` date.
+- `lastUnloadDone` isn't keyed by place on purpose: "All brought in" can cold-launch the app from the notification before the preferences (and the real home ID) have loaded.
 - Both new files live in `AppFiles.directory`, passed to `AppState` as `stateDirectory` (`nil` in tests keeps them in memory).
 - No preference was added: the new unload rule only ever reminds in more cases than before, so there's nothing to opt out of yet.
 

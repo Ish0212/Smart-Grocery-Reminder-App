@@ -82,10 +82,10 @@ The constraint is unchanged: CI (macOS) is the only build. Core logic must there
 
 | Item | Why |
 |---|---|
-| CLMonitor migration | API churn and iOS 17 delivery bugs; it fixes nothing that the ID prefix plus the event queue don't. |
-| Rebuild the arrival timer after a relaunch (R4) | Cosmetic: the notification still fires. Wait for field data. |
-| Enter/exit flapping cooldowns (R5) | Wait for the diagnostics log to show whether it happens. |
-| Remind about checked-off items too (R2) | Product decision. |
+| CLMonitor migration | API churn and iOS 17 delivery bugs; it fixes nothing that the ID prefix plus the event queue don't. Re-evaluated in [Phase 4](phase-4-plan.md#clmonitor-decision): still not migrating. |
+| Rebuild the arrival timer after a relaunch (R4) | Done in [Phase 4](phase-4-plan.md). |
+| Enter/exit flapping cooldowns (R5) | Done in [Phase 4](phase-4-plan.md). |
+| Remind about checked-off items too (R2) | Done in [Phase 4](phase-4-plan.md). |
 | Firebase Analytics | On-device stats were chosen instead. |
 
 ## Verification

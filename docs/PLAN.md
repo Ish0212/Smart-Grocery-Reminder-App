@@ -27,6 +27,7 @@ An iOS app that keeps grocery lists handy and uses location to remind you:
 | Privacy manifest + App Store privacy label / listing copy | Implemented (Phase 3b) |
 | On-device reminder stats (Settings) | Implemented (Phase 3b) |
 | Firestore security rules tests (emulator, Linux CI) + item field validation | Implemented (Phase 3c) |
+| Reminder tuning: count what was just bought, flapping cooldown, countdown survives relaunch | Implemented (Phase 4) |
 | Unit tests (XCTest) | Done (services, sync, places, quick-add, reminder policy, location events, persistence, diagnostics, reminder stats) |
 | CI (GitHub Actions) | Done: macOS `xcodegen` + `xcodebuild build test`; Linux Firestore rules job on rules changes |
 
@@ -88,6 +89,12 @@ users/{uid}                  (profile: email + displayName live in Firebase Auth
 - PR 1: background/relaunch reliability (region IDs survive relaunch, events wait for data, persisted mock backend) + Diagnostics screen
 - PR 2 (Phase 3b, implemented): privacy manifest (CI checks it's bundled), removed the unused location background mode, [App Store docs](app-store/), on-device reminder stats in Settings
 - PR 3 (Phase 3c, implemented): Firestore rules tests on the emulator in `firestore-tests/` (Linux CI job `firestore-rules.yml`), item field validation pinned by `ModelKeysTests`
+
+### Phase 4 — Reminder tuning (implemented — plan: [phase-4-plan.md](phase-4-plan.md))
+- The unload reminder counts items checked off in the last 3 h (and since the last "All brought in"), so checking everything off at the store no longer suppresses it
+- Enter/exit flapping cooldown (15 min home, 60 min per store), saved on the device
+- The arrival countdown survives iOS relaunching the app
+- CLMonitor: decided not to migrate (reasons in the plan)
 
 ## Privacy notes
 
