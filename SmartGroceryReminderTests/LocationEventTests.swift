@@ -209,7 +209,7 @@ final class LocationEventTests: XCTestCase {
     func testArrivalBeforeTheListLoadsIsHandledOnceItDoes() async throws {
         let state = AppState()
         let user = AppUser(id: "queued-user", email: "q@b.c", displayName: "Q")
-        try await state.listService.upsert(item: GroceryItem(title: "Milk"), userId: user.id)
+        try await state.listService.upsert(item: GroceryItem(title: "Milk"), listId: user.id)
         state.currentUser = user
 
         state.handleLocationEvent(LocationEvent(kind: .home, transition: .enter, placeId: "default-home", date: Date()))

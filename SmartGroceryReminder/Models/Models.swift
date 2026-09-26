@@ -13,6 +13,8 @@ struct GroceryItem: Identifiable, Codable, Equatable, Hashable {
     var notes: String
     var aisle: String
     var isCompleted: Bool
+    /// Who checked it off. On a shared list, only your own check-offs count toward your unload reminder.
+    var completedBy: String?
     var createdAt: Date
     var updatedAt: Date
 
@@ -22,6 +24,7 @@ struct GroceryItem: Identifiable, Codable, Equatable, Hashable {
         notes: String = "",
         aisle: String = "",
         isCompleted: Bool = false,
+        completedBy: String? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -30,8 +33,57 @@ struct GroceryItem: Identifiable, Codable, Equatable, Hashable {
         self.notes = notes
         self.aisle = aisle
         self.isCompleted = isCompleted
+        self.completedBy = completedBy
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+    }
+}
+
+/// A grocery list's members. A list's ID is its owner's uid; everyone starts on their own list.
+struct SharedListInfo: Equatable {
+    let ownerId: String
+    let memberIds: [String]
+
+    static let maxMembers = 10
+
+    var isShared: Bool { memberIds.count > 1 }
+
+    static func personal(_ userId: String) -> SharedListInfo {
+        SharedListInfo(ownerId: userId, memberIds: [userId])
+    }
+}
+
+enum SharedListError: LocalizedError, Equatable {
+    case invalidCode
+    case expiredCode
+    case listFull
+    case cannotLeaveOwnList
+    case notSignedIn
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidCode: return "That code doesn't match a list. Check it and try again."
+        case .expiredCode: return "That invite has expired. Ask for a new code."
+        case .listFull: return "That list already has \(SharedListInfo.maxMembers) people."
+        case .cannotLeaveOwnList: return "This is your own list, so there's nothing to leave."
+        case .notSignedIn: return "Sign in first."
+        }
+    }
+}
+
+/// Short codes for joining someone's list: no 0/O/1/I/L, so they're easy to read out loud.
+enum InviteCode {
+    static let alphabet = Array("ABCDEFGHJKMNPQRSTUVWXYZ23456789")
+    static let length = 8
+    static let lifetime: TimeInterval = 7 * 24 * 60 * 60
+
+    static func generate() -> String {
+        String((0..<length).map { _ in alphabet.randomElement()! })
+    }
+
+    /// Uppercases and drops spaces and dashes, so "abcd-2345" and "ABCD 2345" both work.
+    static func normalize(_ code: String) -> String {
+        code.uppercased().filter { !$0.isWhitespace && $0 != "-" }
     }
 }
 

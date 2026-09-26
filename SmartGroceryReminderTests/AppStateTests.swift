@@ -196,11 +196,11 @@ final class AppStateTests: XCTestCase {
         try await waitUntil { state.preferencesLoaded && state.shoppingList.isEmpty }
 
         let apples = GroceryItem(title: "Apples")
-        try await state.listService.upsert(item: apples, userId: user.id)
+        try await state.listService.upsert(item: apples, listId: user.id)
         try await waitUntil { state.shoppingList == [apples] }
 
         state.signOut()
-        try await state.listService.upsert(item: GroceryItem(title: "Pears"), userId: user.id)
+        try await state.listService.upsert(item: GroceryItem(title: "Pears"), listId: user.id)
         try await Task.sleep(nanoseconds: 100_000_000)
 
         XCTAssertTrue(state.shoppingList.isEmpty)

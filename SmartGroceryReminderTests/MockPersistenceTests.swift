@@ -55,11 +55,11 @@ final class MockPersistenceTests: XCTestCase {
         let item = GroceryItem(title: "Apples")
         var prefs = UserPreferences.default
         prefs.homeArrivalDelay = 5 * 60
-        try await first.upsert(item: item, userId: "u1")
+        try await first.upsert(item: item, listId: "u1")
         try await first.savePreferences(prefs, userId: "u1")
 
         let second = MockShoppingListService(store: store)
-        let items = try await second.observeItems(userId: "u1").first { _ in true }
+        let items = try await second.observeItems(listId: "u1").first { _ in true }
         let loadedPrefs = try await second.observePreferences(userId: "u1").first { _ in true }
         XCTAssertEqual(items, [item])
         XCTAssertEqual(loadedPrefs, prefs)
@@ -71,10 +71,10 @@ final class MockPersistenceTests: XCTestCase {
         try Data("not json".utf8).write(to: url)
         let service = MockShoppingListService(store: JSONFileStore(url: url))
 
-        let demoItems = try await service.observeItems(userId: "demo-user").first { _ in true }
+        let demoItems = try await service.observeItems(listId: "demo-user").first { _ in true }
         XCTAssertEqual(demoItems, SampleData.groceryItems)
 
-        try await service.upsert(item: GroceryItem(title: "Pears"), userId: "u1")
+        try await service.upsert(item: GroceryItem(title: "Pears"), listId: "u1")
         guard case .loaded = JSONFileStore<MockListSnapshot>(url: url).load() else {
             return XCTFail("Expected the corrupt file to be replaced")
         }
@@ -85,7 +85,7 @@ final class MockPersistenceTests: XCTestCase {
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         let service = MockShoppingListService(store: JSONFileStore(url: url))
 
-        try await service.upsert(item: GroceryItem(title: "Pears"), userId: "u1")
+        try await service.upsert(item: GroceryItem(title: "Pears"), listId: "u1")
 
         var isDirectory: ObjCBool = false
         XCTAssertTrue(FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory))

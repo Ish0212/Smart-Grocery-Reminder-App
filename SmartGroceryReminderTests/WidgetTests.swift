@@ -90,7 +90,7 @@ final class AppStateWidgetTests: XCTestCase {
         state.isAuthenticated = true
         state.startSync(for: user)
 
-        try await state.listService.upsert(item: GroceryItem(title: "Apples"), userId: user.id)
+        try await state.listService.upsert(item: GroceryItem(title: "Apples"), listId: user.id)
         try await waitUntil { store.load()?.openTitles == ["Apples"] }
 
         state.homeArrivalTimer.start(duration: 600)

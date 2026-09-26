@@ -16,6 +16,7 @@ Smart Grocery Reminder keeps your shopping list with you and uses your saved pla
 - Add stores and your home from Apple Maps search.
 - Add items with Siri or Shortcuts: "Add an item to Smart Grocery".
 - Your list syncs across your devices and works offline.
+- Share one list with your household: invite them with a code, and everyone sees the same items.
 
 Privacy: your location is checked on the iPhone. Only the places you save and your list are stored in your account. Reminder stats are computed on the device.
 

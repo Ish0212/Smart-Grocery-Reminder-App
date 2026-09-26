@@ -18,6 +18,8 @@ struct SettingsView: View {
                     }
                 }
 
+                SharedListSection()
+
                 Section("Daily list reminder") {
                     Toggle("Enabled", isOn: $appState.preferences.dailyListReminderEnabled)
                     DatePicker(

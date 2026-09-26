@@ -5,11 +5,12 @@ import XCTest
 /// field was added or renamed, update `isValidItem` in `firestore.rules` and `firestore-tests/` too.
 final class ModelKeysTests: XCTestCase {
     func testGroceryItemEncodesTheKeysTheRulesAllow() throws {
-        let data = try JSONEncoder().encode(GroceryItem(title: "Milk"))
+        // Optionals are only encoded when set, so set every one.
+        let data = try JSONEncoder().encode(GroceryItem(title: "Milk", isCompleted: true, completedBy: "uid"))
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
         XCTAssertEqual(
             Set(object.keys),
-            ["id", "title", "notes", "aisle", "isCompleted", "createdAt", "updatedAt"]
+            ["id", "title", "notes", "aisle", "isCompleted", "completedBy", "createdAt", "updatedAt"]
         )
     }
 }
