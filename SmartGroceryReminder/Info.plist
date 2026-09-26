@@ -26,10 +26,6 @@
 	<string>Smart Grocery Reminder uses your location to detect grocery stores and home arrival so it can remind you about your list and unloading the car.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Location is used to show nearby grocery places and set your home for arrival reminders.</string>
-	<key>UIBackgroundModes</key>
-	<array>
-		<string>location</string>
-	</array>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UISupportedInterfaceOrientations</key>
