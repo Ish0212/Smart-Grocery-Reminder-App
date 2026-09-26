@@ -76,6 +76,18 @@ xcodebuild -project SmartGroceryReminder.xcodeproj -scheme SmartGroceryReminder 
 
 Or press **⌘U** in Xcode.
 
+### Firestore rules tests (any OS)
+
+Needs Node 20+ and Java 21+. Starts the Firestore emulator, runs `firestore-tests/rules.test.js` against `firestore.rules`, then stops it:
+
+```bash
+cd firestore-tests
+npm ci
+npm test
+```
+
+CI runs the same job on Linux whenever the rules or these tests change (`.github/workflows/firestore-rules.yml`).
+
 ### Demo login (mock backend)
 
 | Field | Value |
