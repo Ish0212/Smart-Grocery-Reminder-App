@@ -18,22 +18,46 @@ targets:
     platform: iOS
     sources:
       - path: SmartGroceryReminder
+      # Compiled into both the app and the widget.
+      - path: Shared
     dependencies:
       - package: Firebase
         products:
           - FirebaseCore
           - FirebaseAuth
           - FirebaseFirestore
+      # Embedded in the app's PlugIns folder.
+      - target: SmartGroceryWidget
     settings:
       PRODUCT_BUNDLE_IDENTIFIER: com.smartgrocery.reminder
       INFOPLIST_FILE: SmartGroceryReminder/Info.plist
       GENERATE_INFOPLIST_FILE: false
+      CODE_SIGN_ENTITLEMENTS: SmartGroceryReminder/SmartGroceryReminder.entitlements
       TARGETED_DEVICE_FAMILY: "1"
       IPHONEOS_DEPLOYMENT_TARGET: "17.0"
     scheme:
       testTargets:
         - SmartGroceryReminderTests
       gatherCoverageData: true
+  SmartGroceryWidget:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: SmartGroceryWidget
+      - path: Shared
+    dependencies:
+      - sdk: WidgetKit.framework
+      - sdk: SwiftUI.framework
+    settings:
+      # Must be a child of the app's bundle ID, or the install fails.
+      PRODUCT_BUNDLE_IDENTIFIER: com.smartgrocery.reminder.widget
+      INFOPLIST_FILE: SmartGroceryWidget/Info.plist
+      GENERATE_INFOPLIST_FILE: false
+      CODE_SIGN_ENTITLEMENTS: SmartGroceryWidget/SmartGroceryWidget.entitlements
+      TARGETED_DEVICE_FAMILY: "1"
+      IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+      # Shared/MarkBroughtInIntent.swift compiles a no-op body in the widget.
+      SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) WIDGET_EXTENSION"
   SmartGroceryReminderTests:
     type: bundle.unit-test
     platform: iOS
