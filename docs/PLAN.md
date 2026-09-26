@@ -30,7 +30,7 @@ An iOS app that keeps grocery lists handy and uses location to remind you:
 | Reminder tuning: count what was just bought, flapping cooldown, countdown survives relaunch | Implemented (Phase 4) |
 | Home-screen widget (list, unload countdown, Brought in button) + `smartgrocery://` deep links | Implemented (Phase 5) |
 | Shared (family) lists with invite codes; personal reminders on shared lists | Implemented (Phase 6; needs a Firebase project to try with two accounts) |
-| Unit tests (XCTest) | Done (services, sync, places, quick-add, reminder policy, location events, persistence, diagnostics, reminder stats) |
+| Unit tests (XCTest) | Done (services, sync, places, quick-add, reminder policy, location events, persistence, diagnostics, reminder stats, widget snapshots, deep links, shared lists) |
 | CI (GitHub Actions) | Done: macOS `xcodegen` + `xcodebuild build test`; Linux Firestore rules job on rules changes |
 
 ## Architecture
@@ -90,7 +90,7 @@ invites/{code}               listId, createdBy, expiresAt
 - App Intents quick-add (Siri / Shortcuts / Spotlight)
 - Deferred: home-screen widget (done in Phase 5), Family Sharing lists (done in Phase 6)
 
-### Phase 3 — Hardening (in progress — plan: [phase-3-plan.md](phase-3-plan.md); device testing: [iphone-testing.md](iphone-testing.md))
+### Phase 3 — Hardening (implemented — plan: [phase-3-plan.md](phase-3-plan.md); device testing: [iphone-testing.md](iphone-testing.md))
 - PR 1: background/relaunch reliability (region IDs survive relaunch, events wait for data, persisted mock backend) + Diagnostics screen
 - PR 2 (Phase 3b, implemented): privacy manifest (CI checks it's bundled), removed the unused location background mode, [App Store docs](app-store/), on-device reminder stats in Settings
 - PR 3 (Phase 3c, implemented): Firestore rules tests on the emulator in `firestore-tests/` (Linux CI job `firestore-rules.yml`), item field validation pinned by `ModelKeysTests`
