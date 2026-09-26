@@ -1,6 +1,6 @@
 # Phase 3 — Hardening: plan
 
-Status: **PR 1 merged** (#4). **PR 2 implemented** as Phase 3b (#5). PR 3 is Phase 3c.
+Status: **PR 1 merged** (#4). **PR 2 implemented** as Phase 3b (#5). **PR 3 implemented** as Phase 3c.
 Roadmap context: [PLAN.md](PLAN.md). Device testing: [iphone-testing.md](iphone-testing.md).
 
 ## Context
@@ -70,13 +70,13 @@ The constraint is unchanged: CI (macOS) is the only build. Core logic must there
 - **`docs/app-store/`:** privacy nutrition label answers and listing copy.
 - **Reminder stats in Settings,** computed from the diagnostics log: reminders scheduled, marked done, snoozed, done rate, median minutes to done.
 
-### PR 3 — Firestore rules tests
+### PR 3 — Firestore rules tests (done: Phase 3c)
 - A Linux CI job (cheap minutes), filtered to rule changes, runs the Firestore emulator with `@firebase/rules-unit-testing`. It checks:
   - the owner is allowed;
   - another user is denied;
   - signed-out access is denied;
   - paths outside `users/` are denied.
-- Field validation comes later, once a Swift test pins the Codable key sets.
+- Items are validated (known keys only, `id` matches the document, typed and size-capped text). `ModelKeysTests.swift` pins `GroceryItem`'s keys so a model change fails CI until the rules are updated. Preferences aren't validated yet: they change in Phase 4.
 
 ## Deferred
 

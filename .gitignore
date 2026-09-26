@@ -50,3 +50,9 @@ Icon?
 
 # graphify knowledge graph output
 graphify-out/
+
+# Firestore rules tests (firestore-tests/)
+node_modules/
+firestore-debug.log
+firebase-debug.log
+ui-debug.log
