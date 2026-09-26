@@ -87,8 +87,13 @@ jobs:
             -clonedSourcePackagesDirPath .spm \
             -destination "id=${{ steps.sim.outputs.udid }}" \
             -resultBundlePath build/Results.xcresult \
+            -derivedDataPath build/DerivedData \
             CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" \
             build test
+
+      # App Store Connect rejects uploads without a privacy manifest; make sure it lands in the bundle.
+      - name: Check privacy manifest is bundled
+        run: plutil -lint build/DerivedData/Build/Products/Debug-iphonesimulator/SmartGroceryReminder.app/PrivacyInfo.xcprivacy
 
       - name: Upload result bundle
         if: failure()
@@ -134,6 +139,7 @@ jobs:
         run: |
           APP=build/DerivedData/Build/Products/Release-iphoneos/SmartGroceryReminder.app
           test -d "$APP"
+          plutil -lint "$APP/PrivacyInfo.xcprivacy"
           mkdir -p build/ipa/Payload
           cp -R "$APP" build/ipa/Payload/
           (cd build/ipa && zip -qry ../SmartGroceryReminder-unsigned.ipa Payload)

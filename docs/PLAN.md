@@ -24,7 +24,9 @@ An iOS app that keeps grocery lists handy and uses location to remind you:
 | Accessibility labels / Dynamic Type friendly layout | Baseline done |
 | Background reliability (relaunch-safe geofences, event queue, saved demo backend) | Implemented (Phase 3, PR 1) |
 | Diagnostics screen (reminder health + event log) | Implemented (Phase 3, PR 1) |
-| Unit tests (XCTest) | Done (services, sync, places, quick-add, reminder policy, location events, persistence, diagnostics) |
+| Privacy manifest + App Store privacy label / listing copy | Implemented (Phase 3b) |
+| On-device reminder stats (Settings) | Implemented (Phase 3b) |
+| Unit tests (XCTest) | Done (services, sync, places, quick-add, reminder policy, location events, persistence, diagnostics, reminder stats) |
 | CI (GitHub Actions, macOS) | Done (`xcodegen` + `xcodebuild build test`) |
 
 ## Architecture
@@ -83,7 +85,7 @@ users/{uid}                  (profile: email + displayName live in Firebase Auth
 
 ### Phase 3 — Hardening (in progress — plan: [phase-3-plan.md](phase-3-plan.md); device testing: [iphone-testing.md](iphone-testing.md))
 - PR 1: background/relaunch reliability (region IDs survive relaunch, events wait for data, persisted mock backend) + Diagnostics screen
-- PR 2: privacy manifest, App Store privacy label + listing copy, on-device reminder stats (no data leaves the phone)
+- PR 2 (Phase 3b, implemented): privacy manifest (CI checks it's bundled), removed the unused location background mode, [App Store docs](app-store/), on-device reminder stats in Settings
 - PR 3: Firestore rules tests on the emulator (Linux CI)
 
 ## Privacy notes
