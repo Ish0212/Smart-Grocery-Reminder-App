@@ -11,6 +11,7 @@ SwiftUI prototype for location-aware grocery lists and home-arrival “unload th
 - Core Location geofencing service for home + grocery stores
 - Apple Maps search to add grocery stores or set your home address (up to 19 stores, the iOS geofence limit)
 - Siri / Shortcuts / Spotlight: “Add an item to Smart Grocery” without opening the app
+- Home-screen widget: open items, or the unload countdown with a **Brought in** button
 - Local notifications: daily list, store entry, car-unload (+ repeat / completion actions)
 - Settings for reminder preferences
 - Reminders survive iOS closing the app: geofence wake-ups are recognized after a relaunch and wait for the list to load

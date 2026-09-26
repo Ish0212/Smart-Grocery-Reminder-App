@@ -65,3 +65,39 @@ final class AppTabTests: XCTestCase {
         XCTAssertNil(AppTab(url: try XCTUnwrap(URL(string: "smartgrocery:list"))))
     }
 }
+
+final class AppStateWidgetTests: XCTestCase {
+    func testSnapshotListsOnlyOpenItems() {
+        let items = [GroceryItem(title: "Milk"), GroceryItem(title: "Eggs", isCompleted: true), GroceryItem(title: "Bread")]
+        let snapshot = AppState.widgetSnapshot(items: items, isSignedIn: true, unloadEndDate: nil)
+        XCTAssertEqual(snapshot.openTitles, ["Milk", "Bread"])
+        XCTAssertEqual(snapshot.openCount, 2)
+    }
+
+    func testSignedOutSnapshotHidesTheList() {
+        let snapshot = AppState.widgetSnapshot(items: [GroceryItem(title: "Milk")], isSignedIn: false, unloadEndDate: nil)
+        XCTAssertEqual(snapshot, .signedOut)
+    }
+
+    @MainActor
+    func testAppWritesSnapshotsForTheListCountdownAndSignOut() async throws {
+        let store = WidgetSnapshotStore(url: temporaryFileURL("widget-snapshot.json"))
+        let state = AppState(widgetStore: store)
+        let user = AppUser(id: "widget-user", email: "w@b.c", displayName: "W")
+        state.currentUser = user
+        state.isAuthenticated = true
+        state.startSync(for: user)
+
+        try await state.listService.upsert(item: GroceryItem(title: "Apples"), userId: user.id)
+        try await waitUntil { store.load()?.openTitles == ["Apples"] }
+
+        state.homeArrivalTimer.start(duration: 600)
+        try await waitUntil { store.load()?.unloadEndDate != nil }
+
+        state.markUnloadComplete(source: "test")
+        try await waitUntil { store.load()?.unloadEndDate == nil }
+
+        state.signOut()
+        try await waitUntil { store.load() == .signedOut }
+    }
+}
