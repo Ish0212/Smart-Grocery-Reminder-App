@@ -47,3 +47,44 @@ final class HomeArrivalTimerServiceTests: XCTestCase {
         XCTAssertEqual(timer.formattedRemaining, "00:00")
     }
 }
+
+final class ArrivalTimerPersistenceTests: XCTestCase {
+    @MainActor
+    func testRunningCountdownIsRestoredByANewInstance() {
+        let store = JSONFileStore<ArrivalTimerState>(url: temporaryFileURL())
+        let start = Date()
+        HomeArrivalTimerService(store: store).start(duration: 600, startedAt: start)
+
+        let restored = HomeArrivalTimerService(store: store, now: start.addingTimeInterval(120))
+
+        XCTAssertTrue(restored.isActive)
+        XCTAssertEqual(restored.remainingSeconds, 480)
+        XCTAssertEqual(restored.selectedDelay, 600)
+        restored.cancel()
+    }
+
+    @MainActor
+    func testFinishedCountdownIsNotRestored() {
+        let store = JSONFileStore<ArrivalTimerState>(url: temporaryFileURL())
+        let start = Date()
+        let first = HomeArrivalTimerService(store: store)
+        first.start(duration: 60, startedAt: start)
+
+        let restored = HomeArrivalTimerService(store: store, now: start.addingTimeInterval(61))
+
+        XCTAssertFalse(restored.isActive)
+        XCTAssertEqual(restored.remainingSeconds, 0)
+        first.cancel()
+    }
+
+    @MainActor
+    func testCancelledCountdownIsNotRestored() {
+        let store = JSONFileStore<ArrivalTimerState>(url: temporaryFileURL())
+        let timer = HomeArrivalTimerService(store: store)
+        timer.start(duration: 600)
+        timer.completeUnload()
+
+        XCTAssertFalse(HomeArrivalTimerService(store: store).isActive)
+        guard case .missing = store.load() else { return XCTFail("Expected the saved countdown to be removed") }
+    }
+}

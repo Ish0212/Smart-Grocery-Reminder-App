@@ -40,6 +40,10 @@ struct JSONFileStore<Value: Codable> {
         try data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
     }
 
+    func remove() {
+        try? FileManager.default.removeItem(at: url)
+    }
+
     /// A file in `AppFiles.directory`.
     static func appSupport(_ fileName: String) -> JSONFileStore<Value> {
         JSONFileStore(url: AppFiles.directory.appendingPathComponent(fileName))

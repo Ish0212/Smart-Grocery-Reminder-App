@@ -1,6 +1,12 @@
 import Foundation
 import Combine
 
+/// A running countdown, saved so it survives iOS killing and relaunching the app.
+struct ArrivalTimerState: Codable, Equatable {
+    let endDate: Date
+    let duration: TimeInterval
+}
+
 @MainActor
 final class HomeArrivalTimerService: ObservableObject {
     @Published var isActive = false
@@ -9,6 +15,7 @@ final class HomeArrivalTimerService: ObservableObject {
 
     private var timer: Timer?
     private var endDate: Date?
+    private let store: JSONFileStore<ArrivalTimerState>?
 
     let presetDelays: [(label: String, seconds: TimeInterval)] = [
         ("5 min", 5 * 60),
@@ -16,6 +23,17 @@ final class HomeArrivalTimerService: ObservableObject {
         ("15 min", 15 * 60),
         ("30 min", 30 * 60)
     ]
+
+    /// - Parameter store: where a running countdown is saved; `nil` keeps it in memory.
+    init(store: JSONFileStore<ArrivalTimerState>? = nil, now: Date = Date()) {
+        self.store = store
+        guard let store, case .loaded(let saved) = store.load(), saved.endDate > now else { return }
+        selectedDelay = saved.duration
+        endDate = saved.endDate
+        isActive = true
+        refresh(now: now)
+        startTicking()
+    }
 
     /// - Parameter startedAt: when the countdown began (the arrival), which can be earlier than now
     ///   when the arrival is handled late, e.g. after iOS relaunched the app.
@@ -25,13 +43,9 @@ final class HomeArrivalTimerService: ObservableObject {
         endDate = startedAt.addingTimeInterval(duration)
         isActive = true
         refresh()
-        guard isActive else { return }
-
-        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                self?.refresh()
-            }
-        }
+        guard isActive, let endDate else { return }
+        try? store?.save(ArrivalTimerState(endDate: endDate, duration: duration))
+        startTicking()
     }
 
     func cancel() {
@@ -40,6 +54,15 @@ final class HomeArrivalTimerService: ObservableObject {
         isActive = false
         remainingSeconds = 0
         endDate = nil
+        store?.remove()
+    }
+
+    private func startTicking() {
+        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.refresh()
+            }
+        }
     }
 
     func completeUnload() {
@@ -56,6 +79,7 @@ final class HomeArrivalTimerService: ObservableObject {
             isActive = false
             timer?.invalidate()
             timer = nil
+            store?.remove()
         } else {
             remainingSeconds = remaining
         }
