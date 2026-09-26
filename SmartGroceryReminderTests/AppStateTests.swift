@@ -95,7 +95,7 @@ final class AppStateTests: XCTestCase {
         var prefs = UserPreferences.default
         prefs.repeatCarUnloadReminder = false
         prefs.carUnloadRepeatInterval = 120
-        let items = [GroceryItem(title: "Milk"), GroceryItem(title: "Eggs"), GroceryItem(title: "Done", isCompleted: true)]
+        let items = [GroceryItem(title: "Milk"), GroceryItem(title: "Eggs"), GroceryItem(title: "Done", isCompleted: true, updatedAt: Date().addingTimeInterval(-24 * 60 * 60))]
 
         let plan = try XCTUnwrap(AppState.carUnloadReminderPlan(preferences: prefs, items: items))
         XCTAssertEqual(plan.itemCount, 2)
