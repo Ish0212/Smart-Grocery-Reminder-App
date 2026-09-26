@@ -42,9 +42,11 @@ final class MockSharedListTests: XCTestCase {
         let code = try await service.createInvite(userId: "alice")
 
         var bobsList = await service.observeActiveList(userId: "bob").makeAsyncIterator()
-        XCTAssertEqual(try await bobsList.next(), "bob")
+        let before = try await bobsList.next()
+        XCTAssertEqual(before, "bob")
         try await service.joinList(code: code.lowercased(), userId: "bob")
-        XCTAssertEqual(try await bobsList.next(), "alice")
+        let after = try await bobsList.next()
+        XCTAssertEqual(after, "alice")
 
         try await service.upsert(item: GroceryItem(title: "Bread"), listId: "alice")
         let items = try await first(await service.observeItems(listId: "alice"))
