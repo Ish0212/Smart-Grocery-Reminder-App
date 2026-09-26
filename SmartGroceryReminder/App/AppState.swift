@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import WidgetKit
 
 @MainActor
 final class AppState: ObservableObject {
@@ -36,6 +37,8 @@ final class AppState: ObservableObject {
     private var backgroundActivityToken: Int?
     private var cooldowns: ReminderCooldowns
     private let cooldownStore: JSONFileStore<ReminderCooldowns>?
+    private let widgetStore: WidgetSnapshotStore?
+    private var lastWidgetSnapshot: WidgetSnapshot?
 
     /// - Parameters:
     ///   - mockStorageDirectory: where the demo backend saves accounts, lists and preferences.
@@ -43,12 +46,14 @@ final class AppState: ObservableObject {
     ///   - diagnostics: the event log; `nil` keeps entries in memory.
     ///   - backgroundActivity: extra background time while a location wake-up waits for data; `nil` for none.
     ///   - stateDirectory: where the arrival countdown and reminder cooldowns are saved; `nil` keeps them in memory.
+    ///   - widgetStore: where the home-screen widget's snapshot is written; `nil` for no widget.
     init(
         useMockBackend: Bool = true,
         mockStorageDirectory: URL? = nil,
         diagnostics: DiagnosticsLog? = nil,
         backgroundActivity: BackgroundActivityProviding? = nil,
-        stateDirectory: URL? = nil
+        stateDirectory: URL? = nil,
+        widgetStore: WidgetSnapshotStore? = nil
     ) {
         // Defaults are created here: in Swift 5 mode a default argument can't call a main-actor initializer.
         let diagnostics = diagnostics ?? DiagnosticsLog()
@@ -65,6 +70,7 @@ final class AppState: ObservableObject {
             self.listService = FirestoreShoppingListService()
         }
         self.diagnostics = diagnostics
+        self.widgetStore = widgetStore
         self.backgroundActivity = backgroundActivity ?? NoBackgroundActivity()
         self.locationService = LocationService(diagnostics: diagnostics)
         self.notificationService = NotificationService()
@@ -95,6 +101,35 @@ final class AppState: ObservableObject {
                 self?.handleLocationEvent(event)
             }
             .store(in: &cancellables)
+
+        // Coalesced, so a sync burst or a background relaunch reloads the widget once.
+        guard widgetStore != nil else { return }
+        Publishers.CombineLatest4($shoppingList, $isAuthenticated, $itemsLoaded, homeArrivalTimer.$endDate)
+            .debounce(for: .milliseconds(300), scheduler: DispatchQueue.main)
+            .sink { [weak self] items, isSignedIn, itemsLoaded, endDate in
+                // Until the list arrives it's empty; keep showing the last snapshot instead.
+                guard !isSignedIn || itemsLoaded else { return }
+                self?.updateWidget(Self.widgetSnapshot(items: items, isSignedIn: isSignedIn, unloadEndDate: endDate))
+            }
+            .store(in: &cancellables)
+    }
+
+    // MARK: - Widget
+
+    static func widgetSnapshot(items: [GroceryItem], isSignedIn: Bool, unloadEndDate: Date?, now: Date = Date()) -> WidgetSnapshot {
+        guard isSignedIn else { return .signedOut }
+        return WidgetSnapshot(
+            openTitles: items.filter { !$0.isCompleted }.map(\.title),
+            unloadEndDate: unloadEndDate,
+            now: now
+        )
+    }
+
+    private func updateWidget(_ snapshot: WidgetSnapshot) {
+        guard snapshot != lastWidgetSnapshot, let widgetStore else { return }
+        lastWidgetSnapshot = snapshot
+        try? widgetStore.save(snapshot)
+        WidgetCenter.shared.reloadTimelines(ofKind: WidgetKind.groceries)
     }
 
     // MARK: - Location events

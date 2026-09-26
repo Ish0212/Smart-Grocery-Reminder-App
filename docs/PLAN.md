@@ -28,6 +28,7 @@ An iOS app that keeps grocery lists handy and uses location to remind you:
 | On-device reminder stats (Settings) | Implemented (Phase 3b) |
 | Firestore security rules tests (emulator, Linux CI) + item field validation | Implemented (Phase 3c) |
 | Reminder tuning: count what was just bought, flapping cooldown, countdown survives relaunch | Implemented (Phase 4) |
+| Home-screen widget (list, unload countdown, Brought in button) + `smartgrocery://` deep links | Implemented (Phase 5) |
 | Unit tests (XCTest) | Done (services, sync, places, quick-add, reminder policy, location events, persistence, diagnostics, reminder stats) |
 | CI (GitHub Actions) | Done: macOS `xcodegen` + `xcodebuild build test`; Linux Firestore rules job on rules changes |
 
@@ -83,7 +84,7 @@ users/{uid}                  (profile: email + displayName live in Firebase Auth
 - Live, offline-first sync with Firestore snapshot listeners (also fixes the PR #2 session blockers)
 - MapKit search for stores and home address, with the 20-geofence limit enforced
 - App Intents quick-add (Siri / Shortcuts / Spotlight)
-- Deferred: home-screen widget (needs an extension + App Group), Family Sharing lists (needs a shared-list data model)
+- Deferred: home-screen widget (done in Phase 5), Family Sharing lists (Phase 6)
 
 ### Phase 3 — Hardening (in progress — plan: [phase-3-plan.md](phase-3-plan.md); device testing: [iphone-testing.md](iphone-testing.md))
 - PR 1: background/relaunch reliability (region IDs survive relaunch, events wait for data, persisted mock backend) + Diagnostics screen
@@ -95,6 +96,11 @@ users/{uid}                  (profile: email + displayName live in Firebase Auth
 - Enter/exit flapping cooldown (15 min home, 60 min per store), saved on the device
 - The arrival countdown survives iOS relaunching the app
 - CLMonitor: decided not to migrate (reasons in the plan)
+
+### Phase 5 — Home-screen widget (implemented — plan: [phase-5-plan.md](phase-5-plan.md))
+- `SmartGroceryWidget` WidgetKit extension (small + medium) reading a snapshot the app writes to the App Group container
+- **Brought in** button runs in the app's process (`LiveActivityIntent`); tapping the widget opens the List or Arrival tab
+- Degrades to a placeholder when the App Group is unavailable (free-account sideloading)
 
 ## Privacy notes
 

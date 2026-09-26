@@ -13,8 +13,10 @@ final class HomeArrivalTimerService: ObservableObject {
     @Published var remainingSeconds: Int = 0
     @Published var selectedDelay: TimeInterval = 10 * 60
 
+    /// When the running countdown ends (also read by the widget); nil when none is running.
+    @Published private(set) var endDate: Date?
+
     private var timer: Timer?
-    private var endDate: Date?
     private let store: JSONFileStore<ArrivalTimerState>?
 
     let presetDelays: [(label: String, seconds: TimeInterval)] = [

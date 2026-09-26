@@ -78,3 +78,15 @@ See [phase-3-plan.md](phase-3-plan.md):
 - the reminder survives iOS closing the app (the geofence is recognized after a relaunch and waits for the list to load);
 - the demo backend saves its sign-in, list and places on the phone;
 - a **Diagnostics** screen (Settings → Diagnostics, or Places → Diagnostics) shows the reminder-health checklist, what iOS thinks about each geofence, and a shareable event log.
+
+## 7. What Phase 4 and 5 builds change
+
+**Phase 4** ([phase-4-plan.md](phase-4-plan.md)):
+- the unload reminder counts what you checked off in the last 3 hours, so you can check everything off at the store and still get it;
+- walking in and out of the home geofence within 15 minutes (or after **All brought in**) doesn't re-arm the reminder;
+- the Arrival countdown continues after iOS closes the app.
+
+**Phase 5** ([phase-5-plan.md](phase-5-plan.md)): a home-screen widget. Long-press the home screen → **+** → **Smart Grocery**.
+- It shows the open items, or the unload countdown with a **Brought in** button.
+- It shares data with the app through an **App Group**. Sideloadly should sign the widget along with the app (and, if you changed the bundle ID, rename the widget's ID to match). After installing, check that **Smart Grocery** appears in the widget gallery.
+- **If the widget only says "Open Smart Grocery to see your list"** while you're signed in, the free-account signing dropped the App Group. The app itself is unaffected; everything else in this guide still works. Try a Sideloadly update or a paid developer account if you want the widget.

@@ -16,7 +16,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
             mockStorageDirectory: isTesting ? nil : AppFiles.directory,
             diagnostics: DiagnosticsLog(store: isTesting ? nil : JSONFileStore<[DiagnosticEntry]>.appSupport("diagnostics.json")),
             backgroundActivity: isTesting ? NoBackgroundActivity() : UIKitBackgroundActivity(),
-            stateDirectory: isTesting ? nil : AppFiles.directory
+            stateDirectory: isTesting ? nil : AppFiles.directory,
+            widgetStore: isTesting ? nil : WidgetSnapshotStore.shared()
         )
         // With @UIApplicationDelegateAdaptor, UIApplication.shared.delegate is SwiftUI's own
         // delegate, so App Intents reach this state through AppState.shared instead.

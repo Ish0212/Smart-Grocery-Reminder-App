@@ -95,6 +95,9 @@ jobs:
       - name: Check privacy manifest is bundled
         run: plutil -lint build/DerivedData/Build/Products/Debug-iphonesimulator/SmartGroceryReminder.app/PrivacyInfo.xcprivacy
 
+      - name: Check the widget is embedded
+        run: plutil -lint build/DerivedData/Build/Products/Debug-iphonesimulator/SmartGroceryReminder.app/PlugIns/SmartGroceryWidget.appex/Info.plist
+
       - name: Upload result bundle
         if: failure()
         uses: actions/upload-artifact@v4
@@ -140,6 +143,7 @@ jobs:
           APP=build/DerivedData/Build/Products/Release-iphoneos/SmartGroceryReminder.app
           test -d "$APP"
           plutil -lint "$APP/PrivacyInfo.xcprivacy"
+          plutil -lint "$APP/PlugIns/SmartGroceryWidget.appex/Info.plist"
           mkdir -p build/ipa/Payload
           cp -R "$APP" build/ipa/Payload/
           (cd build/ipa && zip -qry ../SmartGroceryReminder-unsigned.ipa Payload)
