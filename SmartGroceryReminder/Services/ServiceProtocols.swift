@@ -26,13 +26,25 @@ protocol AuthServiceProtocol {
 }
 
 protocol ShoppingListServiceProtocol {
-    /// Emits the user's items (from the local cache first when offline), then again on every change.
-    func observeItems(userId: String) async -> AsyncThrowingStream<[GroceryItem], Error>
-    func upsert(item: GroceryItem, userId: String) async throws
-    func delete(itemId: String, userId: String) async throws
+    /// Emits the ID of the list the user shops from (their own list's ID is their uid), from the
+    /// local cache first, then again when they join or leave a list. The first time, it creates
+    /// the user's own list and moves their existing items into it.
+    func observeActiveList(userId: String) async -> AsyncThrowingStream<String, Error>
+    /// Emits the list's items (from the local cache first when offline), then again on every change.
+    func observeItems(listId: String) async -> AsyncThrowingStream<[GroceryItem], Error>
+    func upsert(item: GroceryItem, listId: String) async throws
+    func delete(itemId: String, listId: String) async throws
     /// Emits the user's preferences once they are known, then again on every change.
     func observePreferences(userId: String) async -> AsyncThrowingStream<UserPreferences, Error>
     func savePreferences(_ preferences: UserPreferences, userId: String) async throws
+
+    func listInfo(listId: String) async throws -> SharedListInfo
+    /// A code that lets someone join the user's own list for `InviteCode.lifetime`.
+    func createInvite(userId: String) async throws -> String
+    /// Adds the user to the code's list and makes it their active list.
+    func joinList(code: String, userId: String) async throws
+    /// Leaves the active list (if it's someone else's) and goes back to the user's own list.
+    func leaveList(userId: String) async throws
 }
 
 /// Configures Firebase only when GoogleService-Info.plist is bundled.

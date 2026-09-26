@@ -16,6 +16,10 @@ final class AppState: ObservableObject {
     @Published private(set) var itemsLoaded = false
     /// Set when live sync with the backend fails (e.g. Firestore rules deny access).
     @Published private(set) var syncErrorMessage: String?
+    /// The list being shown and edited: the user's own (ID = their uid) or one they joined.
+    @Published private(set) var activeListId: String?
+    /// Who shares the active list; nil until it has been fetched.
+    @Published private(set) var sharedList: SharedListInfo?
 
     /// Location events wait here until the session's list and preferences have loaded.
     private(set) var pendingLocationEvents: [LocationEvent] = []
@@ -32,6 +36,7 @@ final class AppState: ObservableObject {
     /// Cleared once a session starts, so a late restore can't replace a manual sign-in.
     private var canRestoreSession = true
     private var itemsSyncTask: Task<Void, Never>?
+    private var activeListTask: Task<Void, Never>?
     private var preferencesSyncTask: Task<Void, Never>?
     private let backgroundActivity: BackgroundActivityProviding
     private var backgroundActivityToken: Int?
@@ -173,13 +178,15 @@ final class AppState: ObservableObject {
     ///   - lastHandled: when this place last produced a reminder.
     ///   - lastUnloadDone: when the groceries were last marked brought in. For home it also starts
     ///     the cooldown, and items checked off before it are already inside.
+    ///   - userId: whose phone this is; on a shared list, other people's check-offs aren't in this car.
     static func decision(
         for event: LocationEvent,
         preferences: UserPreferences,
         items: [GroceryItem],
         now: Date,
         lastHandled: Date? = nil,
-        lastUnloadDone: Date? = nil
+        lastUnloadDone: Date? = nil,
+        userId: String? = nil
     ) -> LocationEventDecision {
         guard event.transition == .enter else { return .ignore(reason: "left a place") }
         let elapsed = now.timeIntervalSince(event.date)
@@ -196,7 +203,9 @@ final class AppState: ObservableObject {
         }
         switch event.kind {
         case .home:
-            guard let plan = carUnloadReminderPlan(preferences: preferences, items: items, now: now, lastUnloadDone: lastUnloadDone) else {
+            guard let plan = carUnloadReminderPlan(
+                preferences: preferences, items: items, now: now, lastUnloadDone: lastUnloadDone, userId: userId
+            ) else {
                 return .ignore(reason: "nothing bought recently and no unchecked items")
             }
             return .scheduleUnload(
@@ -238,7 +247,8 @@ final class AppState: ObservableObject {
                 items: shoppingList,
                 now: now,
                 lastHandled: cooldowns.lastHandled[Self.cooldownKey(event.kind, event.placeId)],
-                lastUnloadDone: cooldowns.lastUnloadDone
+                lastUnloadDone: cooldowns.lastUnloadDone,
+                userId: currentUser?.id
             ))
         }
         pendingLocationEvents.removeAll()
@@ -329,16 +339,19 @@ final class AppState: ObservableObject {
 
     /// Counts what was just bought (and not yet brought in); with nothing bought recently, falls
     /// back to the unchecked items. Returns nil when there is nothing to unload.
+    /// - Parameter userId: only this user's check-offs count (items with no `completedBy` count too).
     static func carUnloadReminderPlan(
         preferences: UserPreferences,
         items: [GroceryItem],
         now: Date = Date(),
-        lastUnloadDone: Date? = nil
+        lastUnloadDone: Date? = nil,
+        userId: String? = nil
     ) -> (itemCount: Int, repeats: Bool, repeatInterval: TimeInterval)? {
         let boughtCount = items.filter { item in
             let age = now.timeIntervalSince(item.updatedAt)
             let alreadyInside = lastUnloadDone.map { item.updatedAt <= $0 } ?? false
-            return item.isCompleted && age >= 0 && age <= recentPurchaseWindow && !alreadyInside
+            let boughtBySomeoneElse = item.completedBy.map { $0 != userId } ?? false
+            return item.isCompleted && age >= 0 && age <= recentPurchaseWindow && !alreadyInside && !boughtBySomeoneElse
         }.count
         let itemCount = boughtCount > 0 ? boughtCount : items.filter { !$0.isCompleted }.count
         guard itemCount > 0 else { return nil }
@@ -441,21 +454,21 @@ final class AppState: ObservableObject {
     // MARK: - Sync
 
     /// Streams the user's list and preferences into published state until `stopSync()`.
-    /// Geofences are (re)armed whenever the preferences arrive or change.
+    /// Geofences are (re)armed whenever the preferences arrive or change. The items follow the
+    /// active list, which changes when the user joins or leaves a shared list.
     func startSync(for user: AppUser) {
         stopSync()
-        itemsSyncTask = Task { [weak self, listService] in
+        activeListTask = Task { [weak self, listService] in
             do {
-                for try await items in await listService.observeItems(userId: user.id) {
-                    // A value buffered before sign-out must not bring the old list back.
+                for try await listId in await listService.observeActiveList(userId: user.id) {
                     guard !Task.isCancelled, let self else { return }
-                    self.shoppingList = items
-                    self.itemsLoaded = true
-                    self.processPendingLocationEvents()
+                    if listId != self.activeListId || self.itemsSyncTask == nil {
+                        self.observeItems(of: listId)
+                    }
                 }
             } catch {
                 guard !Task.isCancelled else { return }
-                self?.syncErrorMessage = "Couldn't sync your list: \(error.localizedDescription)"
+                self?.syncErrorMessage = "Couldn't load your list: \(error.localizedDescription)"
             }
         }
         preferencesSyncTask = Task { [weak self, listService] in
@@ -480,14 +493,85 @@ final class AppState: ObservableObject {
         processPendingLocationEvents()
     }
 
+    private func observeItems(of listId: String) {
+        itemsSyncTask?.cancel()
+        activeListId = listId
+        sharedList = nil
+        itemsSyncTask = Task { [weak self, listService] in
+            do {
+                for try await items in await listService.observeItems(listId: listId) {
+                    // A value buffered before sign-out or a list switch must not bring the old list back.
+                    guard !Task.isCancelled, let self else { return }
+                    self.shoppingList = items
+                    self.itemsLoaded = true
+                    self.processPendingLocationEvents()
+                }
+            } catch {
+                guard !Task.isCancelled else { return }
+                self?.syncErrorMessage = "Couldn't sync your list: \(error.localizedDescription)"
+            }
+        }
+        Task { await refreshSharedList() }
+    }
+
+    func refreshSharedList() async {
+        guard let listId = activeListId else { return }
+        let info = try? await listService.listInfo(listId: listId)
+        // The user may have switched lists while this was loading.
+        guard listId == activeListId else { return }
+        sharedList = info
+    }
+
     private func stopSync() {
+        activeListTask?.cancel()
         itemsSyncTask?.cancel()
         preferencesSyncTask?.cancel()
+        activeListTask = nil
         itemsSyncTask = nil
         preferencesSyncTask = nil
         preferencesLoaded = false
         itemsLoaded = false
         syncErrorMessage = nil
+        activeListId = nil
+        sharedList = nil
+    }
+
+    // MARK: - Shared lists
+
+    /// A code someone else can enter to join this user's own list.
+    func createInvite() async throws -> String {
+        guard let userId = currentUser?.id else { throw SharedListError.notSignedIn }
+        return try await listService.createInvite(userId: userId)
+    }
+
+    func joinList(code: String) async throws {
+        try await switchList { listService, userId in
+            try await listService.joinList(code: code, userId: userId)
+        }
+    }
+
+    func leaveSharedList() async throws {
+        try await switchList { listService, userId in
+            try await listService.leaveList(userId: userId)
+        }
+    }
+
+    /// Stops listening to the current list's items before the membership changes, so the old
+    /// listener doesn't report "permission denied" once the user is no longer a member. The
+    /// active-list stream then starts the new list's items; on failure the old list resumes.
+    private func switchList(_ change: (ShoppingListServiceProtocol, String) async throws -> Void) async throws {
+        guard let userId = currentUser?.id else { throw SharedListError.notSignedIn }
+        let previous = activeListId
+        itemsSyncTask?.cancel()
+        itemsSyncTask = nil
+        do {
+            try await change(listService, userId)
+        } catch {
+            if itemsSyncTask == nil, let previous {
+                observeItems(of: previous)
+            }
+            throw error
+        }
     }
 
     // MARK: - Editing
@@ -495,25 +579,32 @@ final class AppState: ObservableObject {
     func addItem(_ title: String, notes: String = "", aisle: String = "") async {
         let item = GroceryItem(title: title, notes: notes, aisle: aisle)
         shoppingList.insert(item, at: 0)
-        guard let userId = currentUser?.id else { return }
-        try? await listService.upsert(item: item, userId: userId)
+        guard let listId = editableListId else { return }
+        try? await listService.upsert(item: item, listId: listId)
     }
 
     func toggleItem(_ item: GroceryItem) async {
         guard let index = shoppingList.firstIndex(where: { $0.id == item.id }) else { return }
         shoppingList[index].isCompleted.toggle()
+        shoppingList[index].completedBy = shoppingList[index].isCompleted ? currentUser?.id : nil
         shoppingList[index].updatedAt = Date()
-        guard let userId = currentUser?.id else { return }
-        try? await listService.upsert(item: shoppingList[index], userId: userId)
+        guard let listId = editableListId else { return }
+        try? await listService.upsert(item: shoppingList[index], listId: listId)
     }
 
     func deleteItems(at offsets: IndexSet) async {
         let removed = offsets.map { shoppingList[$0] }
         shoppingList.remove(atOffsets: offsets)
-        guard let userId = currentUser?.id else { return }
+        guard let listId = editableListId else { return }
         for item in removed {
-            try? await listService.delete(itemId: item.id, userId: userId)
+            try? await listService.delete(itemId: item.id, listId: listId)
         }
+    }
+
+    /// Where edits go: the active list, or the user's own list before it has resolved.
+    private var editableListId: String? {
+        guard let userId = currentUser?.id else { return nil }
+        return activeListId ?? userId
     }
 
     // MARK: - Siri & Shortcuts

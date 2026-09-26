@@ -8,21 +8,21 @@ final class MockShoppingListServiceTests: XCTestCase {
     }
 
     func testDemoUserStartsWithSampleItems() async throws {
-        let items = try await current(await MockShoppingListService().observeItems(userId: "demo-user"))
+        let items = try await current(await MockShoppingListService().observeItems(listId: "demo-user"))
         XCTAssertEqual(items, SampleData.groceryItems)
     }
 
     func testUnknownUserStartsWithEmptyList() async throws {
-        let items = try await current(await MockShoppingListService().observeItems(userId: "someone-else"))
+        let items = try await current(await MockShoppingListService().observeItems(listId: "someone-else"))
         XCTAssertEqual(items, [])
     }
 
     func testUpsertInsertsNewItemAtFront() async throws {
         let service = MockShoppingListService()
         let item = GroceryItem(title: "Apples")
-        try await service.upsert(item: item, userId: "demo-user")
+        try await service.upsert(item: item, listId: "demo-user")
 
-        let items = try await current(await service.observeItems(userId: "demo-user")) ?? []
+        let items = try await current(await service.observeItems(listId: "demo-user")) ?? []
         XCTAssertEqual(items.first, item)
         XCTAssertEqual(items.count, SampleData.groceryItems.count + 1)
     }
@@ -31,9 +31,9 @@ final class MockShoppingListServiceTests: XCTestCase {
         let service = MockShoppingListService()
         var item = SampleData.groceryItems[2]
         item.isCompleted = true
-        try await service.upsert(item: item, userId: "demo-user")
+        try await service.upsert(item: item, listId: "demo-user")
 
-        let items = try await current(await service.observeItems(userId: "demo-user")) ?? []
+        let items = try await current(await service.observeItems(listId: "demo-user")) ?? []
         XCTAssertEqual(items.count, SampleData.groceryItems.count)
         XCTAssertEqual(items[2], item)
     }
@@ -41,24 +41,24 @@ final class MockShoppingListServiceTests: XCTestCase {
     func testDeleteRemovesById() async throws {
         let service = MockShoppingListService()
         let target = SampleData.groceryItems[0]
-        try await service.delete(itemId: target.id, userId: "demo-user")
+        try await service.delete(itemId: target.id, listId: "demo-user")
 
-        let items = try await current(await service.observeItems(userId: "demo-user")) ?? []
+        let items = try await current(await service.observeItems(listId: "demo-user")) ?? []
         XCTAssertFalse(items.contains { $0.id == target.id })
     }
 
     func testObserverReceivesEveryChange() async throws {
         let service = MockShoppingListService()
-        var updates = await service.observeItems(userId: "u1").makeAsyncIterator()
+        var updates = await service.observeItems(listId: "u1").makeAsyncIterator()
         let initial = try await updates.next()
         XCTAssertEqual(initial, [])
 
         let item = GroceryItem(title: "Apples")
-        try await service.upsert(item: item, userId: "u1")
+        try await service.upsert(item: item, listId: "u1")
         let afterUpsert = try await updates.next()
         XCTAssertEqual(afterUpsert, [item])
 
-        try await service.delete(itemId: item.id, userId: "u1")
+        try await service.delete(itemId: item.id, listId: "u1")
         let afterDelete = try await updates.next()
         XCTAssertEqual(afterDelete, [])
     }

@@ -29,6 +29,7 @@ An iOS app that keeps grocery lists handy and uses location to remind you:
 | Firestore security rules tests (emulator, Linux CI) + item field validation | Implemented (Phase 3c) |
 | Reminder tuning: count what was just bought, flapping cooldown, countdown survives relaunch | Implemented (Phase 4) |
 | Home-screen widget (list, unload countdown, Brought in button) + `smartgrocery://` deep links | Implemented (Phase 5) |
+| Shared (family) lists with invite codes; personal reminders on shared lists | Implemented (Phase 6; needs a Firebase project to try with two accounts) |
 | Unit tests (XCTest) | Done (services, sync, places, quick-add, reminder policy, location events, persistence, diagnostics, reminder stats) |
 | CI (GitHub Actions) | Done: macOS `xcodegen` + `xcodebuild build test`; Linux Firestore rules job on rules changes |
 
@@ -47,9 +48,12 @@ Views (SwiftUI)
 ### Data model (Firestore-shaped)
 
 ```
-users/{uid}                  (profile: email + displayName live in Firebase Auth)
+users/{uid}                  activeListId (profile: email + displayName live in Firebase Auth)
   preferences/main   → home, stores, reminder settings
-  items/{itemId}     → title, notes, aisle, isCompleted, createdAt, updatedAt
+  items/{itemId}     → legacy personal list, migrated once into lists/{uid}
+lists/{listId}               ownerId, memberIds (listId == owner's uid)
+  items/{itemId}     → title, notes, aisle, isCompleted, completedBy, createdAt, updatedAt
+invites/{code}               listId, createdBy, expiresAt
 ```
 
 ### Geofencing flow
@@ -84,7 +88,7 @@ users/{uid}                  (profile: email + displayName live in Firebase Auth
 - Live, offline-first sync with Firestore snapshot listeners (also fixes the PR #2 session blockers)
 - MapKit search for stores and home address, with the 20-geofence limit enforced
 - App Intents quick-add (Siri / Shortcuts / Spotlight)
-- Deferred: home-screen widget (done in Phase 5), Family Sharing lists (Phase 6)
+- Deferred: home-screen widget (done in Phase 5), Family Sharing lists (done in Phase 6)
 
 ### Phase 3 — Hardening (in progress — plan: [phase-3-plan.md](phase-3-plan.md); device testing: [iphone-testing.md](iphone-testing.md))
 - PR 1: background/relaunch reliability (region IDs survive relaunch, events wait for data, persisted mock backend) + Diagnostics screen
@@ -102,10 +106,16 @@ users/{uid}                  (profile: email + displayName live in Firebase Auth
 - **Brought in** button runs in the app's process (`LiveActivityIntent`); tapping the widget opens the List or Arrival tab
 - Degrades to a placeholder when the App Group is unavailable (free-account sideloading)
 
+### Phase 6 — Shared lists (implemented — plan: [phase-6-plan.md](phase-6-plan.md))
+- Each user owns one list (ID = uid); invite family with an 8-character code (7-day expiry, max 10 members); leave to go back to your own list
+- The active list is followed live from `users/{uid}`; existing items migrate into `lists/{uid}` in one atomic batch
+- Reminders stay personal: only your own check-offs (`completedBy`) count toward your unload reminder
+- Rules + 18 new emulator tests for lists, invites, joining and leaving
+
 ## Privacy notes
 
 - Location: Always authorization preferred for reliable geofence wakeups; copy explains grocery + home use only
-- Data: lists and preferences stored per authenticated user
+- Data: preferences stored per authenticated user; a list is readable only by its members (by default just its owner)
 - Secrets: real Firebase plist is gitignored
 
 ## Demo path (simulator)

@@ -1,6 +1,6 @@
 # Phase 6 — Shared (family) lists: plan
 
-Status: **in progress** on branch `phase6-shared-lists`.
+Status: **implemented** on branch `phase6-shared-lists`.
 Roadmap context: [PLAN.md](PLAN.md) (deferred from Phase 2: "needs a shared-list data model").
 
 ## Context
@@ -14,7 +14,9 @@ A household shops from one list. Today every list lives under `users/{uid}/items
 - **Leaving** puts the member back on their own list, which still has their old items. The owner can't leave their own list, but they can join someone else's. Removing other members is out of scope.
 - **At most 10 members** per list.
 - **Preferences stay per user** in `users/{uid}/preferences/main`. The active list is stored in `users/{uid}` as `activeListId`.
-- **Migration is idempotent.** On first sync, if `lists/{uid}` doesn't exist, create it (`ownerId: uid, memberIds: [uid]`) and copy `users/{uid}/items/*` into `lists/{uid}/items` in one batch. Legacy items are left in place: rollback-safe, and the old rule still covers them.
+- **The active list comes from a snapshot listener** on `users/{uid}`, not a one-off read. The cache is served immediately, so a geofence relaunch while locked or offline isn't held up by a server round trip (the Phase 3 "wait for the list" budget). Joining or leaving just changes `activeListId`, and the listener switches the items.
+- **Migration is one atomic batch.** It runs only when the *server* confirms `activeListId` is missing: create `lists/{uid}` (`ownerId: uid, memberIds: [uid]`), copy `users/{uid}/items/*` into `lists/{uid}/items`, and set `activeListId`. Because the batch is atomic, "no `activeListId`" means "no `lists/{uid}`", so the app never has to read a list that may not exist (the rules would deny that read). Legacy items are left in place: rollback-safe, and the old rule still covers them.
+- **Reminders stay personal on a shared list.** Items record `completedBy` when checked off. The unload reminder only counts *your* recent check-offs, plus older items with no `completedBy`, so a partner's shopping trip doesn't make your phone ask about groceries in your car.
 
 ## Data model
 
@@ -48,10 +50,11 @@ users/{uid}                   activeListId
 
 | Unit | Change |
 |---|---|
-| `ShoppingListServiceProtocol` | Item methods take `listId`. New: `resolveActiveList(userId:)` (ensures the own list exists and migrates, returns the active list ID), `createInvite(userId:)`, `joinList(code:userId:)`, `leaveList(userId:)`, `listInfo(listId:)`. |
+| `ShoppingListServiceProtocol` | Item methods take `listId`. New: `observeActiveList(userId:)` (a stream; creates and migrates your own list the first time), `createInvite(userId:)`, `joinList(code:userId:)`, `leaveList(userId:)`, `listInfo(listId:)`. |
+| `GroceryItem` | `completedBy: String?`, set by `toggleItem`. The rules and `ModelKeysTests` include it. |
 | `MockShoppingListService` | In-memory + saved lists, invites and active list per user. Old saved files still decode (new keys are optional). Items stay keyed by list ID, and the personal list ID is the uid, so existing demo data keeps working. |
 | `FirestoreShoppingListService` | Paths move to `lists/{listId}/items`. The migration batch; invite/join/leave as described above. Join uses `arrayUnion` plus `joinCode`, so the rules can check the invite. |
-| `AppState` | `activeListId` and `sharedList` published. Items sync resolves the active list first. `createInvite()`, `joinList(code:)` and `leaveSharedList()` restart items sync. Edits go to the active list. |
+| `AppState` | `activeListId` and `sharedList` published. Items sync follows the active-list stream. `joinList(code:)` and `leaveSharedList()` stop the old items listener *before* the membership write (otherwise it reports "permission denied"), and resume it if the change fails. Edits go to the active list. The unload reminder passes the user's ID. |
 | Settings | "Shared list" section: status (your list / shared with N / joined someone's), **Invite** (shows the code with a share sheet), **Join with a code**, **Leave**. |
 
 ## Tasks and tests
