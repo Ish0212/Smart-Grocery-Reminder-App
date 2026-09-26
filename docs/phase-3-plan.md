@@ -1,6 +1,6 @@
 # Phase 3 — Hardening: plan
 
-Status: **PR 1 implemented** on branch `phase3-hardening` (stacked on `phase2-polish` / PR #3); PR 2 and PR 3 not started.
+Status: **PR 1 merged** (#4). **PR 2 implemented** as Phase 3b (#5). PR 3 is Phase 3c.
 Roadmap context: [PLAN.md](PLAN.md). Device testing: [iphone-testing.md](iphone-testing.md).
 
 ## Context
@@ -60,7 +60,7 @@ The constraint is unchanged: CI (macOS) is the only build. Core logic must there
    - A shareable event log.
 7. **Docs, then a new `.ipa`** for the device test.
 
-### PR 2 — App Store readiness + on-device stats
+### PR 2 — App Store readiness + on-device stats (done: #5)
 - **`PrivacyInfo.xcprivacy`:**
   - no tracking;
   - collected data: email, name, user ID, precise location of saved places, and the list — all linked to the user, used for App Functionality;
@@ -101,3 +101,9 @@ The constraint is unchanged: CI (macOS) is the only build. Core logic must there
   5. The log shows a background launch, then home enter, then the unload reminder scheduled; the notification arrives about 5 minutes later.
   6. Repeat after force-quitting the app.
   7. Sign-in and the list survive the app being killed.
+
+## Phase 3b manual checks (device)
+
+- Settings → **Reminder stats** shows counts after an arrival: scheduled goes up on home arrival; "Brought in" and the median update after tapping **All brought in**.
+- Region-based reminders still wake the app with the location background mode removed (repeat the leave-home field test above).
+- Before App Store submission: Xcode → Product → Archive → Generate Privacy Report, and compare it with [app-store/privacy-label.md](app-store/privacy-label.md).
