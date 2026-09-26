@@ -41,6 +41,8 @@ struct SettingsView: View {
                     }
                 }
 
+                ReminderStatsSection(diagnostics: appState.diagnostics)
+
                 Section {
                     NavigationLink("Diagnostics") {
                         DiagnosticsView(diagnostics: appState.diagnostics)
@@ -77,6 +79,27 @@ struct SettingsView: View {
             let components = Calendar.current.dateComponents([.hour, .minute], from: date)
             appState.preferences.reminderHour = components.hour ?? 17
             appState.preferences.reminderMinute = components.minute ?? 30
+        }
+    }
+}
+
+/// On-device stats from the diagnostics log; observes the log so it updates live.
+private struct ReminderStatsSection: View {
+    @ObservedObject var diagnostics: DiagnosticsLog
+
+    var body: some View {
+        let stats = ReminderStats.compute(from: diagnostics.entries)
+        Section {
+            LabeledContent("Unload reminders", value: "\(stats.unloadScheduled)")
+            LabeledContent("Brought in", value: "\(stats.unloadDone)")
+            LabeledContent("Snoozed", value: "\(stats.snoozed)")
+            LabeledContent("Store reminders", value: "\(stats.storeRemindersSent)")
+            LabeledContent("Done rate", value: stats.doneRate.map { $0.formatted(.percent.precision(.fractionLength(0))) } ?? "—")
+            LabeledContent("Median time to done", value: stats.medianMinutesToDone.map { "\(Int($0.rounded())) min" } ?? "—")
+        } header: {
+            Text("Reminder stats")
+        } footer: {
+            Text("From the last \(diagnostics.entries.count) logged events. Computed on this iPhone; nothing is sent anywhere.")
         }
     }
 }
