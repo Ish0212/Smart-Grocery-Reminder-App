@@ -26,8 +26,9 @@ An iOS app that keeps grocery lists handy and uses location to remind you:
 | Diagnostics screen (reminder health + event log) | Implemented (Phase 3, PR 1) |
 | Privacy manifest + App Store privacy label / listing copy | Implemented (Phase 3b) |
 | On-device reminder stats (Settings) | Implemented (Phase 3b) |
+| Firestore security rules tests (emulator, Linux CI) + item field validation | Implemented (Phase 3c) |
 | Unit tests (XCTest) | Done (services, sync, places, quick-add, reminder policy, location events, persistence, diagnostics, reminder stats) |
-| CI (GitHub Actions, macOS) | Done (`xcodegen` + `xcodebuild build test`) |
+| CI (GitHub Actions) | Done: macOS `xcodegen` + `xcodebuild build test`; Linux Firestore rules job on rules changes |
 
 ## Architecture
 
@@ -75,7 +76,7 @@ users/{uid}                  (profile: email + displayName live in Firebase Auth
 - `FirebaseAuthService` (sign in / sign up / sign out, errors mapped to app messages) and `FirestoreShoppingListService` (items + preferences, offline-first writes)
 - Security rules in `firestore.rules`: users can only read/write their own `users/{uid}` tree
 - Signed-in users stay signed in across launches (`AppState.restoreSession()` at launch; waits for Firebase if the device was locked)
-- Follow-ups: rules unit tests with the Firebase emulator; make background geofence wakeups wait for the list to load before scheduling reminders
+- Follow-ups (both done in Phase 3): rules unit tests with the Firebase emulator; background geofence wakeups wait for the list to load
 
 ### Phase 2 — Polish (implemented; needs a device to try Firebase sync, search and Siri — plan: [phase-2-plan.md](phase-2-plan.md))
 - Live, offline-first sync with Firestore snapshot listeners (also fixes the PR #2 session blockers)
@@ -86,7 +87,7 @@ users/{uid}                  (profile: email + displayName live in Firebase Auth
 ### Phase 3 — Hardening (in progress — plan: [phase-3-plan.md](phase-3-plan.md); device testing: [iphone-testing.md](iphone-testing.md))
 - PR 1: background/relaunch reliability (region IDs survive relaunch, events wait for data, persisted mock backend) + Diagnostics screen
 - PR 2 (Phase 3b, implemented): privacy manifest (CI checks it's bundled), removed the unused location background mode, [App Store docs](app-store/), on-device reminder stats in Settings
-- PR 3: Firestore rules tests on the emulator (Linux CI)
+- PR 3 (Phase 3c, implemented): Firestore rules tests on the emulator in `firestore-tests/` (Linux CI job `firestore-rules.yml`), item field validation pinned by `ModelKeysTests`
 
 ## Privacy notes
 
