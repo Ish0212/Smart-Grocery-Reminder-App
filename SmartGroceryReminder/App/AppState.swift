@@ -34,17 +34,22 @@ final class AppState: ObservableObject {
     private var preferencesSyncTask: Task<Void, Never>?
     private let backgroundActivity: BackgroundActivityProviding
     private var backgroundActivityToken: Int?
+    /// When each place (by region ID) last produced a reminder, for the flapping cooldown.
+    private var lastHandled: [String: Date]
+    private let cooldownStore: JSONFileStore<[String: Date]>?
 
     /// - Parameters:
     ///   - mockStorageDirectory: where the demo backend saves accounts, lists and preferences.
     ///     `nil` (tests, previews) keeps them in memory.
     ///   - diagnostics: the event log; `nil` keeps entries in memory.
     ///   - backgroundActivity: extra background time while a location wake-up waits for data; `nil` for none.
+    ///   - stateDirectory: where the arrival countdown and reminder cooldowns are saved; `nil` keeps them in memory.
     init(
         useMockBackend: Bool = true,
         mockStorageDirectory: URL? = nil,
         diagnostics: DiagnosticsLog? = nil,
-        backgroundActivity: BackgroundActivityProviding? = nil
+        backgroundActivity: BackgroundActivityProviding? = nil,
+        stateDirectory: URL? = nil
     ) {
         // Defaults are created here: in Swift 5 mode a default argument can't call a main-actor initializer.
         let diagnostics = diagnostics ?? DiagnosticsLog()
@@ -64,7 +69,16 @@ final class AppState: ObservableObject {
         self.backgroundActivity = backgroundActivity ?? NoBackgroundActivity()
         self.locationService = LocationService(diagnostics: diagnostics)
         self.notificationService = NotificationService()
-        self.homeArrivalTimer = HomeArrivalTimerService()
+        self.homeArrivalTimer = HomeArrivalTimerService(
+            store: stateDirectory.map { JSONFileStore<ArrivalTimerState>(url: $0.appendingPathComponent("arrival-timer.json")) }
+        )
+        let cooldownStore = stateDirectory.map { JSONFileStore<[String: Date]>(url: $0.appendingPathComponent("reminder-cooldowns.json")) }
+        self.cooldownStore = cooldownStore
+        if case .loaded(let saved) = cooldownStore?.load() {
+            self.lastHandled = saved
+        } else {
+            self.lastHandled = [:]
+        }
 
         self.isAuthenticated = false
         self.currentUser = nil
@@ -112,19 +126,38 @@ final class AppState: ObservableObject {
     /// Events older than this are dropped rather than acted on late.
     static let maxEventAge: TimeInterval = 60 * 60
 
+    /// A real enter this soon after the same place last produced a reminder is GPS jitter at the
+    /// edge of the geofence, not a new visit.
+    static func cooldown(for kind: GeoPlace.PlaceKind) -> TimeInterval {
+        switch kind {
+        case .home: return 15 * 60
+        case .groceryStore: return 60 * 60
+        }
+    }
+
+    /// - Parameter lastHandled: when this place last produced a reminder (or, for home, when the
+    ///   groceries were marked brought in).
     static func decision(
         for event: LocationEvent,
         preferences: UserPreferences,
         items: [GroceryItem],
-        now: Date
+        now: Date,
+        lastHandled: Date? = nil
     ) -> LocationEventDecision {
         guard event.transition == .enter else { return .ignore(reason: "left a place") }
         let elapsed = now.timeIntervalSince(event.date)
         guard elapsed <= maxEventAge else { return .ignore(reason: "the event is over an hour old") }
+        if !event.isSimulated, let lastHandled {
+            // Also covers an event older than the last handled time, e.g. queued before "All brought in".
+            let sinceLast = event.date.timeIntervalSince(lastHandled)
+            if sinceLast < cooldown(for: event.kind) {
+                return .ignore(reason: "already handled \(describe(seconds: max(sinceLast, 0))) earlier")
+            }
+        }
         switch event.kind {
         case .home:
-            guard let plan = carUnloadReminderPlan(preferences: preferences, items: items) else {
-                return .ignore(reason: "no unchecked items on the list")
+            guard let plan = carUnloadReminderPlan(preferences: preferences, items: items, now: now) else {
+                return .ignore(reason: "nothing bought recently and no unchecked items")
             }
             return .scheduleUnload(
                 delay: effectiveDelay(configured: preferences.homeArrivalDelay, elapsed: elapsed),
@@ -159,7 +192,13 @@ final class AppState: ObservableObject {
         guard sessionDataLoaded, !pendingLocationEvents.isEmpty else { return }
         let now = Date()
         let decisions = Self.coalesced(pendingLocationEvents).map { event in
-            (event, Self.decision(for: event, preferences: preferences, items: shoppingList, now: now))
+            (event, Self.decision(
+                for: event,
+                preferences: preferences,
+                items: shoppingList,
+                now: now,
+                lastHandled: lastHandled[Self.cooldownKey(event.kind, event.placeId)]
+            ))
         }
         pendingLocationEvents.removeAll()
         Task {
@@ -181,12 +220,24 @@ final class AppState: ObservableObject {
                 repeatInterval: repeatInterval
             )
             diagnostics.record(.unloadScheduled, "Unload reminder in \(Self.describe(seconds: delay)) for \(itemCount) item(s)", placeKind: .home)
+            recordHandled(event.kind, event.placeId, at: event.date)
         case .notifyStore(let itemCount):
             await notificationService.sendGroceryStoreReminder(itemCount: itemCount)
             diagnostics.record(.storeReminderSent, "Store reminder sent for \(itemCount) item(s)", placeKind: .groceryStore)
+            recordHandled(event.kind, event.placeId, at: event.date)
         case .ignore(let reason):
             diagnostics.record(.skipped, "No reminder for the \(Self.describe(event)): \(reason)", placeKind: event.kind)
         }
+    }
+
+    static func cooldownKey(_ kind: GeoPlace.PlaceKind, _ placeId: String) -> String {
+        "\(kind.rawValue):\(placeId)"
+    }
+
+    private func recordHandled(_ kind: GeoPlace.PlaceKind, _ placeId: String, at date: Date) {
+        let key = Self.cooldownKey(kind, placeId)
+        lastHandled[key] = max(lastHandled[key] ?? date, date)
+        try? cooldownStore?.save(lastHandled)
     }
 
     private func beginBackgroundActivityIfNeeded() {
@@ -225,14 +276,23 @@ final class AppState: ObservableObject {
         preferences.storeEntryReminderEnabled && openItemCount > 0
     }
 
-    /// Returns nil when there is nothing left to unload.
+    /// Items checked off this recently were bought on this trip, so they're in the car.
+    static let recentPurchaseWindow: TimeInterval = 3 * 60 * 60
+
+    /// Counts what was just bought; with nothing bought recently, falls back to the unchecked items.
+    /// Returns nil when there is nothing to unload.
     static func carUnloadReminderPlan(
         preferences: UserPreferences,
-        items: [GroceryItem]
+        items: [GroceryItem],
+        now: Date = Date()
     ) -> (itemCount: Int, repeats: Bool, repeatInterval: TimeInterval)? {
-        let openCount = items.filter { !$0.isCompleted }.count
-        guard openCount > 0 else { return nil }
-        return (openCount, preferences.repeatCarUnloadReminder, preferences.carUnloadRepeatInterval)
+        let boughtCount = items.filter { item in
+            let age = now.timeIntervalSince(item.updatedAt)
+            return item.isCompleted && age >= 0 && age <= recentPurchaseWindow
+        }.count
+        let itemCount = boughtCount > 0 ? boughtCount : items.filter { !$0.isCompleted }.count
+        guard itemCount > 0 else { return nil }
+        return (itemCount, preferences.repeatCarUnloadReminder, preferences.carUnloadRepeatInterval)
     }
 
     // MARK: - Notification actions
@@ -263,10 +323,19 @@ final class AppState: ObservableObject {
     }
 
     /// Every "groceries are in" path (notification action or in-app button) goes through here.
-    func markUnloadComplete(source: String) {
+    func markUnloadComplete(source: String, now: Date = Date()) {
         homeArrivalTimer.completeUnload()
         notificationService.markCarUnloadComplete()
         diagnostics.record(.unloadDone, "Groceries brought in (\(source))", placeKind: .home)
+        // A jittery re-enter right after bringing everything in shouldn't start another reminder.
+        if let home = preferences.homeLocation {
+            recordHandled(.home, home.id, at: now)
+        }
+    }
+
+    /// When the place last produced a reminder (or, for home, the groceries were brought in).
+    func lastHandledDate(_ kind: GeoPlace.PlaceKind, _ placeId: String) -> Date? {
+        lastHandled[Self.cooldownKey(kind, placeId)]
     }
 
     // MARK: - Session
@@ -305,6 +374,8 @@ final class AppState: ObservableObject {
         preferences = .default
         locationService.stopMonitoring()
         homeArrivalTimer.cancel()
+        lastHandled = [:]
+        cooldownStore?.remove()
     }
 
     private func startSession(for user: AppUser) {

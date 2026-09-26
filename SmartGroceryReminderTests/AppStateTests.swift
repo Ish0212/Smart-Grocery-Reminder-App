@@ -15,9 +15,69 @@ final class AppStateTests: XCTestCase {
     }
 
     @MainActor
-    func testCarUnloadPlanIsNilWhenEverythingIsCompleted() async {
-        let items = [GroceryItem(title: "Milk", isCompleted: true)]
-        XCTAssertNil(AppState.carUnloadReminderPlan(preferences: .default, items: items))
+    func testCarUnloadPlanIsNilWhenEverythingWasCompletedLongAgo() async {
+        let now = Date()
+        let items = [GroceryItem(title: "Milk", isCompleted: true, updatedAt: now.addingTimeInterval(-24 * 60 * 60))]
+        XCTAssertNil(AppState.carUnloadReminderPlan(preferences: .default, items: items, now: now))
+    }
+
+    @MainActor
+    func testCarUnloadPlanCountsItemsJustBought() async throws {
+        let now = Date()
+        let items = [
+            GroceryItem(title: "Milk", isCompleted: true, updatedAt: now.addingTimeInterval(-20 * 60)),
+            GroceryItem(title: "Eggs", isCompleted: true, updatedAt: now.addingTimeInterval(-2 * 60 * 60)),
+            GroceryItem(title: "Old", isCompleted: true, updatedAt: now.addingTimeInterval(-4 * 60 * 60)),
+            GroceryItem(title: "Still needed"),
+        ]
+        let plan = try XCTUnwrap(AppState.carUnloadReminderPlan(preferences: .default, items: items, now: now))
+        XCTAssertEqual(plan.itemCount, 2, "Only the items checked off in the last 3 hours are in the car")
+    }
+
+    @MainActor
+    func testCarUnloadPlanFallsBackToUncheckedItems() async throws {
+        let now = Date()
+        let items = [
+            GroceryItem(title: "Old", isCompleted: true, updatedAt: now.addingTimeInterval(-4 * 60 * 60)),
+            GroceryItem(title: "Milk"),
+            GroceryItem(title: "Bread"),
+        ]
+        let plan = try XCTUnwrap(AppState.carUnloadReminderPlan(preferences: .default, items: items, now: now))
+        XCTAssertEqual(plan.itemCount, 2)
+    }
+
+    @MainActor
+    func testCarUnloadPlanIgnoresCheckOffsFromTheFuture() async {
+        // Another device's clock can be ahead; that isn't "just bought".
+        let now = Date()
+        let items = [GroceryItem(title: "Milk", isCompleted: true, updatedAt: now.addingTimeInterval(60 * 60))]
+        XCTAssertNil(AppState.carUnloadReminderPlan(preferences: .default, items: items, now: now))
+    }
+
+    @MainActor
+    func testMarkDoneStartsTheHomeCooldownAndItIsSaved() async throws {
+        let directory = temporaryFileURL("state").deletingLastPathComponent()
+        let now = Date(timeIntervalSince1970: 2_000_000)
+        let state = AppState(stateDirectory: directory)
+        let homeId = try XCTUnwrap(state.preferences.homeLocation?.id)
+
+        state.markUnloadComplete(source: "test", now: now)
+
+        XCTAssertEqual(state.lastHandledDate(.home, homeId), now)
+        XCTAssertEqual(AppState(stateDirectory: directory).lastHandledDate(.home, homeId), now)
+    }
+
+    @MainActor
+    func testSignOutClearsCooldowns() async throws {
+        let directory = temporaryFileURL("state").deletingLastPathComponent()
+        let state = AppState(stateDirectory: directory)
+        let homeId = try XCTUnwrap(state.preferences.homeLocation?.id)
+        state.markUnloadComplete(source: "test")
+
+        state.signOut()
+
+        XCTAssertNil(state.lastHandledDate(.home, homeId))
+        XCTAssertNil(AppState(stateDirectory: directory).lastHandledDate(.home, homeId))
     }
 
     @MainActor

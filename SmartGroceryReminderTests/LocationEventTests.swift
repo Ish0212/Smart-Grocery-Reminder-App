@@ -33,6 +33,67 @@ final class LocationEventTests: XCTestCase {
     // MARK: - Decisions
 
     @MainActor
+    func testArrivalAfterCheckingEverythingOffStillSchedulesUnload() {
+        let bought = [
+            GroceryItem(title: "Milk", isCompleted: true, updatedAt: now.addingTimeInterval(-30 * 60)),
+            GroceryItem(title: "Eggs", isCompleted: true, updatedAt: now.addingTimeInterval(-25 * 60)),
+        ]
+        guard case .scheduleUnload(_, let itemCount, _, _) = AppState.decision(
+            for: event(), preferences: .default, items: bought, now: now
+        ) else { return XCTFail("Expected scheduleUnload") }
+        XCTAssertEqual(itemCount, 2)
+    }
+
+    // MARK: - Flapping cooldown
+
+    @MainActor
+    func testHomeEnterInsideTheCooldownIsIgnored() {
+        let decision = AppState.decision(
+            for: event(), preferences: .default, items: items, now: now,
+            lastHandled: now.addingTimeInterval(-5 * 60)
+        )
+        guard case .ignore(let reason) = decision else { return XCTFail("Expected ignore") }
+        XCTAssertTrue(reason.contains("already handled"), reason)
+    }
+
+    @MainActor
+    func testHomeEnterAfterTheCooldownSchedules() {
+        let decision = AppState.decision(
+            for: event(), preferences: .default, items: items, now: now,
+            lastHandled: now.addingTimeInterval(-AppState.cooldown(for: .home))
+        )
+        guard case .scheduleUnload = decision else { return XCTFail("Expected scheduleUnload") }
+    }
+
+    @MainActor
+    func testStoreCooldownIsLongerThanHome() {
+        let twentyMinutesAgo = now.addingTimeInterval(-20 * 60)
+        guard case .ignore = AppState.decision(
+            for: event(.groceryStore), preferences: .default, items: items, now: now, lastHandled: twentyMinutesAgo
+        ) else { return XCTFail("Expected the store enter to be ignored") }
+        guard case .scheduleUnload = AppState.decision(
+            for: event(.home), preferences: .default, items: items, now: now, lastHandled: twentyMinutesAgo
+        ) else { return XCTFail("Expected the home enter to schedule") }
+    }
+
+    @MainActor
+    func testSimulatedEventsSkipTheCooldown() {
+        var simulated = event()
+        simulated.isSimulated = true
+        guard case .scheduleUnload = AppState.decision(
+            for: simulated, preferences: .default, items: items, now: now, lastHandled: now.addingTimeInterval(-60)
+        ) else { return XCTFail("Expected scheduleUnload") }
+    }
+
+    @MainActor
+    func testArrivalOlderThanTheLastHandledTimeIsIgnored() {
+        // e.g. a queued arrival from before "All brought in" was tapped.
+        guard case .ignore = AppState.decision(
+            for: event(secondsAgo: 120), preferences: .default, items: items, now: now, lastHandled: now
+        ) else { return XCTFail("Expected ignore") }
+    }
+
+    @MainActor
     func testHomeArrivalSchedulesUnloadAfterTheConfiguredDelay() {
         var prefs = UserPreferences.default
         prefs.homeArrivalDelay = 600
@@ -68,8 +129,8 @@ final class LocationEventTests: XCTestCase {
     }
 
     @MainActor
-    func testArrivalWithEverythingCheckedOffIsIgnored() {
-        let done = [GroceryItem(title: "Milk", isCompleted: true)]
+    func testArrivalWithEverythingCheckedOffLongAgoIsIgnored() {
+        let done = [GroceryItem(title: "Milk", isCompleted: true, updatedAt: now.addingTimeInterval(-24 * 60 * 60))]
         guard case .ignore = AppState.decision(for: event(), preferences: .default, items: done, now: now) else {
             return XCTFail("Expected ignore")
         }
