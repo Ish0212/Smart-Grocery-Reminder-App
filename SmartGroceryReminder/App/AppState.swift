@@ -303,19 +303,28 @@ final class AppState: ObservableObject {
         switch decision {
         case let .scheduleUnload(delay, itemCount, repeats, repeatInterval):
             homeArrivalTimer.start(duration: preferences.homeArrivalDelay, startedAt: event.date)
-            await notificationService.scheduleHomeArrivalReminder(
+            let scheduled = await notificationService.scheduleHomeArrivalReminder(
                 after: delay,
                 itemCount: itemCount,
                 repeats: repeats,
                 repeatInterval: repeatInterval
             )
             guard currentUser?.id == userId else { return }
+            // Not counted and no cooldown, so the next arrival tries again.
+            guard scheduled else {
+                diagnostics.record(.error, "Couldn't schedule the unload reminder: notifications not allowed?", placeKind: .home)
+                return
+            }
             let what = itemCount == 0 ? "your groceries" : "\(itemCount) item(s)"
             diagnostics.record(.unloadScheduled, "Unload reminder in \(Self.describe(seconds: delay)) for \(what)", placeKind: .home)
             recordHandled(event.kind, event.placeId, at: event.date)
         case .notifyStore(let itemCount):
-            await notificationService.sendGroceryStoreReminder(itemCount: itemCount)
+            let sent = await notificationService.sendGroceryStoreReminder(itemCount: itemCount)
             guard currentUser?.id == userId else { return }
+            guard sent else {
+                diagnostics.record(.error, "Couldn't send the store reminder: notifications not allowed?", placeKind: .groceryStore)
+                return
+            }
             diagnostics.record(.storeReminderSent, "Store reminder sent for \(itemCount) item(s)", placeKind: .groceryStore)
             recordHandled(event.kind, event.placeId, at: event.date)
         case .ignore(let reason):

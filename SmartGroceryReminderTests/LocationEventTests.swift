@@ -565,6 +565,56 @@ final class LocationEventTests: XCTestCase {
     }
 
     @MainActor
+    func testRefusedRequestsReportFailure() async {
+        let service = NotificationService(center: nil)
+        service.refusesRequestsForTesting = true
+
+        let scheduled = await service.scheduleHomeArrivalReminder(after: 600, itemCount: 1, repeats: true, repeatInterval: 300)
+        let sent = await service.sendGroceryStoreReminder(itemCount: 1)
+        XCTAssertFalse(scheduled)
+        XCTAssertFalse(sent)
+        XCTAssertTrue(service.scheduledForTesting.isEmpty)
+
+        service.refusesRequestsForTesting = false
+        let retried = await service.scheduleHomeArrivalReminder(after: 600, itemCount: 1, repeats: false, repeatInterval: 0)
+        XCTAssertTrue(retried)
+    }
+
+    @MainActor
+    func testARefusedUnloadReminderIsNotCountedAndStartsNoCooldown() async throws {
+        let state = try await loadedSession(items: [GroceryItem(title: "Milk", isCompleted: true, completedBy: "session-user")])
+        state.notificationService.refusesRequestsForTesting = true
+
+        state.handleLocationEvent(enter(home))
+        try await waitUntil { state.diagnostics.entries.contains { $0.kind == .error && $0.placeKind == .home } }
+        XCTAssertFalse(state.diagnostics.entries.contains { $0.kind == .unloadScheduled })
+        XCTAssertTrue(state.notificationService.scheduledForTesting.isEmpty)
+
+        // No cooldown was recorded, so the next arrival tries again instead of "already handled".
+        state.notificationService.refusesRequestsForTesting = false
+        state.handleLocationEvent(enter(home))
+        try await waitUntil { state.diagnostics.entries.contains { $0.kind == .unloadScheduled } }
+        XCTAssertFalse(state.diagnostics.entries.contains { $0.kind == .skipped })
+        state.signOut()
+    }
+
+    @MainActor
+    func testARefusedStoreReminderIsNotCountedAndStartsNoCooldown() async throws {
+        let state = try await loadedSession(items: [GroceryItem(title: "Bread")])
+        state.notificationService.refusesRequestsForTesting = true
+
+        state.handleLocationEvent(enter(store))
+        try await waitUntil { state.diagnostics.entries.contains { $0.kind == .error && $0.placeKind == .groceryStore } }
+        XCTAssertFalse(state.diagnostics.entries.contains { $0.kind == .storeReminderSent })
+
+        state.notificationService.refusesRequestsForTesting = false
+        state.handleLocationEvent(enter(store))
+        try await waitUntil { state.diagnostics.entries.contains { $0.kind == .storeReminderSent } }
+        XCTAssertFalse(state.diagnostics.entries.contains { $0.kind == .skipped })
+        state.signOut()
+    }
+
+    @MainActor
     func testMarkUnloadCompleteStopsTheTimerAndIsLogged() {
         let state = AppState.forTesting()
         state.homeArrivalTimer.start(duration: 60)

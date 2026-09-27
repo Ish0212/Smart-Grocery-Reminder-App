@@ -15,6 +15,8 @@ final class NotificationService: ObservableObject {
     private(set) var removedForTesting: [String] = []
     /// Inert mode only: the identifiers that would still be pending.
     private var pendingForTesting: Set<String> = []
+    /// Inert mode only: refuse every request, as iOS does when it can't schedule one.
+    var refusesRequestsForTesting = false
 
     /// - Parameter center: `nil` for an inert service that only records what it would schedule and remove.
     init(center: UNUserNotificationCenter? = UNUserNotificationCenter.current()) {
@@ -44,20 +46,22 @@ final class NotificationService: ObservableObject {
         isAuthorized = status == .authorized
     }
 
+    /// Returns false if iOS refused the reminder; the repeat is only added after the first one.
+    @discardableResult
     func scheduleHomeArrivalReminder(
         after delay: TimeInterval,
         itemCount: Int,
         repeats: Bool,
         repeatInterval: TimeInterval
-    ) async {
+    ) async -> Bool {
         removePending([NotificationID.carUnload, NotificationID.carUnloadRepeat])
 
         let content = Self.carUnloadContent(itemCount: itemCount, isRepeat: false)
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: max(delay, 5), repeats: false)
         let request = UNNotificationRequest(identifier: NotificationID.carUnload, content: content, trigger: trigger)
-        await add(request)
+        let added = await add(request)
 
-        if repeats {
+        if repeats, added {
             let repeatContent = Self.carUnloadContent(itemCount: itemCount, isRepeat: true)
             let repeatTrigger = UNTimeIntervalNotificationTrigger(timeInterval: max(delay + repeatInterval, 60), repeats: false)
             let repeatRequest = UNNotificationRequest(
@@ -69,6 +73,7 @@ final class NotificationService: ObservableObject {
         }
 
         await refreshPendingCount()
+        return added
     }
 
     /// The car-unload reminder. It carries the item count so "Remind again" works even when the
@@ -91,8 +96,10 @@ final class NotificationService: ObservableObject {
         return content
     }
 
-    func sendGroceryStoreReminder(itemCount: Int) async {
-        guard itemCount > 0 else { return }
+    /// Returns false if there was nothing to send or iOS refused it.
+    @discardableResult
+    func sendGroceryStoreReminder(itemCount: Int) async -> Bool {
+        guard itemCount > 0 else { return false }
         let content = UNMutableNotificationContent()
         content.title = "You're near a grocery store"
         content.body = "Your list has \(itemCount) open item\(itemCount == 1 ? "" : "s")."
@@ -101,8 +108,9 @@ final class NotificationService: ObservableObject {
 
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
         let request = UNNotificationRequest(identifier: NotificationID.storeVisit, content: content, trigger: trigger)
-        await add(request)
+        let added = await add(request)
         await refreshPendingCount()
+        return added
     }
 
     func rescheduleRepeatingReminders(preferences: UserPreferences, items: [GroceryItem]) async {
@@ -173,6 +181,7 @@ final class NotificationService: ObservableObject {
     @discardableResult
     private func add(_ request: UNNotificationRequest) async -> Bool {
         guard let center else {
+            guard !refusesRequestsForTesting else { return false }
             scheduledForTesting.append(request)
             pendingForTesting.insert(request.identifier)
             return true
