@@ -7,13 +7,25 @@ final class NotificationService: ObservableObject {
     @Published private(set) var authorizationStatus: UNAuthorizationStatus = .notDetermined
     @Published var pendingCount = 0
 
-    private let center = UNUserNotificationCenter.current()
+    /// `nil` when inert (tests): nothing is scheduled and no permission is requested.
+    private let center: UNUserNotificationCenter?
+    /// Inert mode only: every request that would have been scheduled, in order.
+    private(set) var scheduledForTesting: [UNNotificationRequest] = []
+    /// Inert mode only: every identifier that would have been removed, in order.
+    private(set) var removedForTesting: [String] = []
+    /// Inert mode only: the identifiers that would still be pending.
+    private var pendingForTesting: Set<String> = []
 
-    init() {
+    /// - Parameter center: `nil` for an inert service that only records what it would schedule and remove.
+    init(center: UNUserNotificationCenter? = UNUserNotificationCenter.current()) {
+        self.center = center
         registerCategories()
     }
 
+    var isInert: Bool { center == nil }
+
     func requestAuthorization() async {
+        guard let center else { return }
         registerCategories()
         do {
             isAuthorized = try await center.requestAuthorization(options: [.alert, .sound, .badge])
@@ -26,6 +38,7 @@ final class NotificationService: ObservableObject {
 
     /// Reads the current permission without prompting (it can change in Settings at any time).
     func refreshAuthorizationStatus() async {
+        guard let center else { return }
         let status = await center.notificationSettings().authorizationStatus
         authorizationStatus = status
         isAuthorized = status == .authorized
@@ -37,15 +50,12 @@ final class NotificationService: ObservableObject {
         repeats: Bool,
         repeatInterval: TimeInterval
     ) async {
-        center.removePendingNotificationRequests(withIdentifiers: [
-            NotificationID.carUnload,
-            NotificationID.carUnloadRepeat
-        ])
+        removePending([NotificationID.carUnload, NotificationID.carUnloadRepeat])
 
         let content = Self.carUnloadContent(itemCount: itemCount, isRepeat: false)
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: max(delay, 5), repeats: false)
         let request = UNNotificationRequest(identifier: NotificationID.carUnload, content: content, trigger: trigger)
-        try? await center.add(request)
+        await add(request)
 
         if repeats {
             let repeatContent = Self.carUnloadContent(itemCount: itemCount, isRepeat: true)
@@ -55,7 +65,7 @@ final class NotificationService: ObservableObject {
                 content: repeatContent,
                 trigger: repeatTrigger
             )
-            try? await center.add(repeatRequest)
+            await add(repeatRequest)
         }
 
         await refreshPendingCount()
@@ -85,12 +95,12 @@ final class NotificationService: ObservableObject {
 
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
         let request = UNNotificationRequest(identifier: NotificationID.storeVisit, content: content, trigger: trigger)
-        try? await center.add(request)
+        await add(request)
         await refreshPendingCount()
     }
 
     func rescheduleRepeatingReminders(preferences: UserPreferences, items: [GroceryItem]) async {
-        center.removePendingNotificationRequests(withIdentifiers: [NotificationID.dailyList])
+        removePending([NotificationID.dailyList])
         guard preferences.dailyListReminderEnabled else {
             await refreshPendingCount()
             return
@@ -110,19 +120,17 @@ final class NotificationService: ObservableObject {
 
         let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: true)
         let request = UNNotificationRequest(identifier: NotificationID.dailyList, content: content, trigger: trigger)
-        try? await center.add(request)
+        await add(request)
         await refreshPendingCount()
     }
 
     func markCarUnloadComplete() {
-        center.removePendingNotificationRequests(withIdentifiers: [
-            NotificationID.carUnload,
-            NotificationID.carUnloadRepeat
-        ])
+        removePending([NotificationID.carUnload, NotificationID.carUnloadRepeat])
         Task { await refreshPendingCount() }
     }
 
     private func registerCategories() {
+        guard let center else { return }
         let done = UNNotificationAction(
             identifier: NotificationAction.markDone,
             title: "All brought in",
@@ -147,8 +155,37 @@ final class NotificationService: ObservableObject {
     }
 
     private func refreshPendingCount() async {
+        guard let center else {
+            pendingCount = pendingForTesting.count
+            return
+        }
         let requests = await center.pendingNotificationRequests()
         pendingCount = requests.count
+    }
+
+    /// Schedules the request, or when inert only records it. Returns false if iOS refused it.
+    @discardableResult
+    private func add(_ request: UNNotificationRequest) async -> Bool {
+        guard let center else {
+            scheduledForTesting.append(request)
+            pendingForTesting.insert(request.identifier)
+            return true
+        }
+        do {
+            try await center.add(request)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    private func removePending(_ identifiers: [String]) {
+        guard let center else {
+            removedForTesting.append(contentsOf: identifiers)
+            pendingForTesting.subtract(identifiers)
+            return
+        }
+        center.removePendingNotificationRequests(withIdentifiers: identifiers)
     }
 }
 

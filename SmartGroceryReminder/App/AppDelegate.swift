@@ -5,19 +5,26 @@ import UserNotifications
 /// That is required to receive an action (e.g. "All brought in") that cold-launched the app.
 @MainActor
 final class AppDelegate: NSObject, UIApplicationDelegate {
+    /// Under XCTest the host app keeps everything in memory on the demo backend, with inert
+    /// location and notification services, so tests never restore a saved session, request
+    /// permissions, or touch the device's saved data, geofences or notifications.
+    private static let isTesting = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+        || NSClassFromString("XCTestCase") != nil
+
     let appState: AppState = {
+        let isTesting = AppDelegate.isTesting
         // Firebase must be configured before AppState picks its backend.
-        FirebaseBootstrap.configureIfAvailable()
-        // Under XCTest the host app keeps everything in memory, so tests never restore a saved
-        // session (which would request permissions) or touch the device's saved data.
-        let isTesting = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+        if !isTesting {
+            FirebaseBootstrap.configureIfAvailable()
+        }
         let state = AppState(
-            useMockBackend: !FirebaseBootstrap.isConfigured,
+            useMockBackend: isTesting || !FirebaseBootstrap.isConfigured,
             mockStorageDirectory: isTesting ? nil : AppFiles.directory,
             diagnostics: DiagnosticsLog(store: isTesting ? nil : JSONFileStore<[DiagnosticEntry]>.appSupport("diagnostics.json")),
             backgroundActivity: isTesting ? NoBackgroundActivity() : UIKitBackgroundActivity(),
             stateDirectory: isTesting ? nil : AppFiles.directory,
-            widgetStore: isTesting ? nil : WidgetSnapshotStore.shared()
+            widgetStore: isTesting ? nil : WidgetSnapshotStore.shared(),
+            systemServices: !isTesting
         )
         // With @UIApplicationDelegateAdaptor, UIApplication.shared.delegate is SwiftUI's own
         // delegate, so App Intents reach this state through AppState.shared instead.
@@ -38,7 +45,9 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
                 ? "Launched by a location event\(inBackground ? " (in the background)" : "")"
                 : (inBackground ? "Launched in the background" : "Launched")
         )
-        appState.restoreSession()
+        if !Self.isTesting {
+            appState.restoreSession()
+        }
         return true
     }
 }

@@ -47,13 +47,20 @@ final class LocationService: NSObject, ObservableObject {
     /// Region enters and exits for AppState to act on. Sent on the main actor.
     let events = PassthroughSubject<LocationEvent, Never>()
 
-    private let manager = CLLocationManager()
+    /// `nil` when inert (tests): nothing reaches iOS and no permission is requested.
+    private let manager: CLLocationManager?
     private let diagnostics: DiagnosticsLog
+    /// Inert mode only: the regions iOS would be monitoring, by region identifier.
+    private(set) var monitoredForTesting: [String: CLCircularRegion] = [:]
 
-    /// - Parameter diagnostics: `nil` keeps events in an in-memory log.
-    init(diagnostics: DiagnosticsLog? = nil) {
+    /// - Parameters:
+    ///   - diagnostics: `nil` keeps events in an in-memory log.
+    ///   - manager: `nil` for an inert service that only records the regions it would monitor.
+    init(diagnostics: DiagnosticsLog? = nil, manager: CLLocationManager? = CLLocationManager()) {
         self.diagnostics = diagnostics ?? DiagnosticsLog()
+        self.manager = manager
         super.init()
+        guard let manager else { return }
         manager.delegate = self
         manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
         authorizationStatus = manager.authorizationStatus
@@ -61,13 +68,16 @@ final class LocationService: NSObject, ObservableObject {
         systemRegionCount = manager.monitoredRegions.count
     }
 
+    var isInert: Bool { manager == nil }
+
     func requestAuthorization() {
-        manager.requestAlwaysAuthorization()
+        manager?.requestAlwaysAuthorization()
     }
 
     /// A single location fix, for "use current location" and nearby search. Geofences don't need
     /// continuous GPS, so nothing keeps location updates running.
     func requestCurrentLocation() {
+        guard let manager else { return }
         switch manager.authorizationStatus {
         case .authorizedAlways, .authorizedWhenInUse:
             manager.requestLocation()
@@ -78,7 +88,8 @@ final class LocationService: NSObject, ObservableObject {
 
     /// Asks iOS whether the phone is inside each monitored region (answers arrive in regionStates).
     func refreshRegionStates() {
-        systemRegionCount = manager.monitoredRegions.count
+        systemRegionCount = currentRegions.count
+        guard let manager else { return }
         for region in manager.monitoredRegions {
             manager.requestState(for: region)
         }
@@ -91,21 +102,21 @@ final class LocationService: NSObject, ObservableObject {
         let places = (home.map { [$0] } ?? []) + stores
         let desired = Dictionary(places.map { (RegionID.make(for: $0), $0) }, uniquingKeysWith: { first, _ in first })
         let diff = Self.regionDiff(
-            current: Set(manager.monitoredRegions.map(\.identifier)),
+            current: Set(currentRegions.map(\.identifier)),
             desired: Set(desired.keys)
         )
 
-        for region in manager.monitoredRegions where diff.stop.contains(region.identifier) {
-            manager.stopMonitoring(for: region)
+        for region in currentRegions where diff.stop.contains(region.identifier) {
+            stop(region)
         }
         for identifier in diff.start {
             if let place = desired[identifier] {
-                manager.startMonitoring(for: makeRegion(for: place, identifier: identifier))
+                start(makeRegion(for: place, identifier: identifier))
             }
         }
 
         monitoredRegions = places.map(\.name)
-        systemRegionCount = manager.monitoredRegions.count
+        systemRegionCount = currentRegions.count
         regionStates = regionStates.filter { desired[$0.key] != nil }
         lastEventDescription = places.isEmpty ? "No geofences configured" : "Monitoring \(places.count) place(s)"
         if !diff.start.isEmpty || !diff.stop.isEmpty {
@@ -119,8 +130,8 @@ final class LocationService: NSObject, ObservableObject {
     }
 
     func stopMonitoring() {
-        for region in manager.monitoredRegions {
-            manager.stopMonitoring(for: region)
+        for region in currentRegions {
+            stop(region)
         }
         monitoredRegions.removeAll()
         regionStates.removeAll()
@@ -183,6 +194,28 @@ final class LocationService: NSObject, ObservableObject {
         case .notDetermined: return "Not determined"
         @unknown default: return "Unknown"
         }
+    }
+
+    /// The regions iOS is monitoring, or in inert mode the ones it would be.
+    private var currentRegions: [CLRegion] {
+        guard let manager else { return monitoredForTesting.values.map { $0 } }
+        return Array(manager.monitoredRegions)
+    }
+
+    private func start(_ region: CLCircularRegion) {
+        guard let manager else {
+            monitoredForTesting[region.identifier] = region
+            return
+        }
+        manager.startMonitoring(for: region)
+    }
+
+    private func stop(_ region: CLRegion) {
+        guard let manager else {
+            monitoredForTesting[region.identifier] = nil
+            return
+        }
+        manager.stopMonitoring(for: region)
     }
 
     private func makeRegion(for place: GeoPlace, identifier: String) -> CLCircularRegion {

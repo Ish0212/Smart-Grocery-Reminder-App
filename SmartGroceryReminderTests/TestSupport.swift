@@ -1,4 +1,28 @@
 import XCTest
+@testable import SmartGroceryReminder
+
+extension AppState {
+    /// The demo backend with inert location and notification services: tests never touch the
+    /// device's geofences or notifications, and never trigger a permission prompt. What the
+    /// services would have done is in `monitoredForTesting` / `scheduledForTesting` / `removedForTesting`.
+    static func forTesting(
+        mockStorageDirectory: URL? = nil,
+        diagnostics: DiagnosticsLog? = nil,
+        backgroundActivity: BackgroundActivityProviding? = nil,
+        stateDirectory: URL? = nil,
+        widgetStore: WidgetSnapshotStore? = nil
+    ) -> AppState {
+        AppState(
+            useMockBackend: true,
+            mockStorageDirectory: mockStorageDirectory,
+            diagnostics: diagnostics,
+            backgroundActivity: backgroundActivity,
+            stateDirectory: stateDirectory,
+            widgetStore: widgetStore,
+            systemServices: false
+        )
+    }
+}
 
 extension XCTestCase {
     /// A file URL inside a fresh temporary directory that is removed after the test.

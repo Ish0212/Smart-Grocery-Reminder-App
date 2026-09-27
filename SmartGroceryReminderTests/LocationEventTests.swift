@@ -1,4 +1,5 @@
 import XCTest
+import UserNotifications
 @testable import SmartGroceryReminder
 
 @MainActor
@@ -207,7 +208,7 @@ final class LocationEventTests: XCTestCase {
 
     @MainActor
     func testArrivalBeforeTheListLoadsIsHandledOnceItDoes() async throws {
-        let state = AppState()
+        let state = AppState.forTesting()
         let user = AppUser(id: "queued-user", email: "q@b.c", displayName: "Q")
         try await state.listService.upsert(item: GroceryItem(title: "Milk"), listId: user.id)
         state.currentUser = user
@@ -226,7 +227,7 @@ final class LocationEventTests: XCTestCase {
     @MainActor
     func testRunningOutOfBackgroundTimeDropsQueuedEvents() {
         let activity = FakeBackgroundActivity()
-        let state = AppState(backgroundActivity: activity)
+        let state = AppState.forTesting(backgroundActivity: activity)
         state.currentUser = AppUser(id: "u", email: "u@b.c", displayName: "U")
 
         state.handleLocationEvent(LocationEvent(kind: .home, transition: .enter, placeId: "p", date: Date()))
@@ -242,7 +243,7 @@ final class LocationEventTests: XCTestCase {
     @MainActor
     func testSignOutClearsTheQueue() {
         let activity = FakeBackgroundActivity()
-        let state = AppState(backgroundActivity: activity)
+        let state = AppState.forTesting(backgroundActivity: activity)
         state.currentUser = AppUser(id: "u", email: "u@b.c", displayName: "U")
         state.handleLocationEvent(LocationEvent(kind: .home, transition: .enter, placeId: "p", date: Date()))
 
@@ -255,22 +256,55 @@ final class LocationEventTests: XCTestCase {
     // MARK: - Notification actions and timer
 
     @MainActor
-    func testSnoozeUsesTheCountFromTheNotification() async {
-        let state = AppState()
+    func testSnoozeUsesTheCountFromTheNotification() async throws {
+        let state = AppState.forTesting()
+        state.shoppingList = [GroceryItem(title: "Milk"), GroceryItem(title: "Eggs"), GroceryItem(title: "Bread")]
+
         await state.handleNotificationAction(NotificationAction.snooze, category: NotificationCategory.carUnload, itemCount: 2)
+
         XCTAssertEqual(state.diagnostics.entries.last?.kind, .snoozed)
+        let scheduled = state.notificationService.scheduledForTesting
+        XCTAssertEqual(scheduled.map(\.identifier), [NotificationID.carUnload])
+        let request = try XCTUnwrap(scheduled.first)
+        XCTAssertEqual(request.content.userInfo[NotificationUserInfo.itemCount] as? Int, 2)
+        let trigger = try XCTUnwrap(request.trigger as? UNTimeIntervalNotificationTrigger)
+        XCTAssertEqual(trigger.timeInterval, state.preferences.carUnloadRepeatInterval)
     }
 
     @MainActor
     func testSnoozeWithoutACountBeforeTheListLoadsIsSkipped() async {
-        let state = AppState()
+        let state = AppState.forTesting()
         await state.handleNotificationAction(NotificationAction.snooze, category: NotificationCategory.carUnload)
         XCTAssertEqual(state.diagnostics.entries.last?.kind, .skipped)
+        XCTAssertTrue(state.notificationService.scheduledForTesting.isEmpty)
+    }
+
+    @MainActor
+    func testInertNotificationServiceRecordsWhatItWouldScheduleAndRemove() async throws {
+        let service = NotificationService(center: nil)
+        XCTAssertTrue(service.isInert)
+
+        await service.scheduleHomeArrivalReminder(after: 600, itemCount: 3, repeats: true, repeatInterval: 300)
+
+        XCTAssertEqual(service.scheduledForTesting.map(\.identifier), [NotificationID.carUnload, NotificationID.carUnloadRepeat])
+        let first = try XCTUnwrap(service.scheduledForTesting.first)
+        XCTAssertEqual(first.content.userInfo[NotificationUserInfo.itemCount] as? Int, 3)
+        XCTAssertEqual((first.trigger as? UNTimeIntervalNotificationTrigger)?.timeInterval, 600)
+        XCTAssertEqual(service.pendingCount, 2)
+
+        service.markCarUnloadComplete()
+
+        XCTAssertEqual(Array(service.removedForTesting.suffix(2)), [NotificationID.carUnload, NotificationID.carUnloadRepeat])
+        try await waitUntil { service.pendingCount == 0 }
+
+        // Never prompts.
+        await service.requestAuthorization()
+        XCTAssertEqual(service.authorizationStatus, .notDetermined)
     }
 
     @MainActor
     func testMarkUnloadCompleteStopsTheTimerAndIsLogged() {
-        let state = AppState()
+        let state = AppState.forTesting()
         state.homeArrivalTimer.start(duration: 60)
 
         state.markUnloadComplete(source: "app")

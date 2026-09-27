@@ -1,5 +1,7 @@
 import Foundation
 import Combine
+import CoreLocation
+import UserNotifications
 import WidgetKit
 
 @MainActor
@@ -52,13 +54,16 @@ final class AppState: ObservableObject {
     ///   - backgroundActivity: extra background time while a location wake-up waits for data; `nil` for none.
     ///   - stateDirectory: where the arrival countdown and reminder cooldowns are saved; `nil` keeps them in memory.
     ///   - widgetStore: where the home-screen widget's snapshot is written; `nil` for no widget.
+    ///   - systemServices: `false` (tests) makes the location and notification services inert:
+    ///     they only record what they would do, and never ask for permission.
     init(
         useMockBackend: Bool = true,
         mockStorageDirectory: URL? = nil,
         diagnostics: DiagnosticsLog? = nil,
         backgroundActivity: BackgroundActivityProviding? = nil,
         stateDirectory: URL? = nil,
-        widgetStore: WidgetSnapshotStore? = nil
+        widgetStore: WidgetSnapshotStore? = nil,
+        systemServices: Bool = true
     ) {
         // Defaults are created here: in Swift 5 mode a default argument can't call a main-actor initializer.
         let diagnostics = diagnostics ?? DiagnosticsLog()
@@ -77,8 +82,8 @@ final class AppState: ObservableObject {
         self.diagnostics = diagnostics
         self.widgetStore = widgetStore
         self.backgroundActivity = backgroundActivity ?? NoBackgroundActivity()
-        self.locationService = LocationService(diagnostics: diagnostics)
-        self.notificationService = NotificationService()
+        self.locationService = LocationService(diagnostics: diagnostics, manager: systemServices ? CLLocationManager() : nil)
+        self.notificationService = NotificationService(center: systemServices ? UNUserNotificationCenter.current() : nil)
         self.homeArrivalTimer = HomeArrivalTimerService(
             store: stateDirectory.map { JSONFileStore<ArrivalTimerState>(url: $0.appendingPathComponent("arrival-timer.json")) }
         )

@@ -1,9 +1,38 @@
 import XCTest
+import CoreLocation
+import UserNotifications
 @testable import SmartGroceryReminder
 
-// AppState.signIn/signUp are deliberately not exercised here: they request location and
-// notification permission, and the system alerts would hang a simulator test run.
+// Tests use AppState.forTesting: its location and notification services are inert, so signing in
+// never requests permission (the system alerts would hang a simulator test run).
 final class AppStateTests: XCTestCase {
+    @MainActor
+    func testTheTestHostRunsOnTheDemoBackendWithInertServices() throws {
+        let host = try XCTUnwrap(AppState.shared)
+        XCTAssertTrue(host.useMockBackend)
+        XCTAssertTrue(host.locationService.isInert)
+        XCTAssertTrue(host.notificationService.isInert)
+        XCTAssertFalse(host.isAuthenticated)
+    }
+
+    @MainActor
+    func testASessionArmsGeofencesWithoutTouchingTheSystem() async throws {
+        let state = AppState.forTesting()
+        try await state.signUp(email: "inert@example.com", password: "secret1", displayName: "Inert")
+        try await waitUntil { state.preferencesLoaded }
+
+        let home = GeoPlace(id: "inert-home", name: "Home", latitude: 40.7, longitude: -74.0, kind: .home)
+        await state.setHome(home)
+
+        let expected = ([home] + state.preferences.savedStores).map(RegionID.make(for:))
+        XCTAssertEqual(Set(state.locationService.monitoredForTesting.keys), Set(expected))
+        XCTAssertEqual(state.locationService.authorizationStatus, .notDetermined)
+        XCTAssertEqual(state.notificationService.authorizationStatus, .notDetermined)
+
+        state.signOut()
+        XCTAssertTrue(state.locationService.monitoredForTesting.isEmpty)
+    }
+
     @MainActor
     func testStoreReminderRespectsToggleAndItemCount() async {
         var prefs = UserPreferences.default
@@ -58,24 +87,24 @@ final class AppStateTests: XCTestCase {
     func testMarkDoneIsSavedForTheNextLaunch() async throws {
         let directory = temporaryFileURL("state").deletingLastPathComponent()
         let now = Date(timeIntervalSince1970: 2_000_000)
-        let state = AppState(stateDirectory: directory)
+        let state = AppState.forTesting(stateDirectory: directory)
 
         state.markUnloadComplete(source: "test", now: now)
 
         XCTAssertEqual(state.lastUnloadDone, now)
-        XCTAssertEqual(AppState(stateDirectory: directory).lastUnloadDone, now)
+        XCTAssertEqual(AppState.forTesting(stateDirectory: directory).lastUnloadDone, now)
     }
 
     @MainActor
     func testSignOutClearsCooldowns() async throws {
         let directory = temporaryFileURL("state").deletingLastPathComponent()
-        let state = AppState(stateDirectory: directory)
+        let state = AppState.forTesting(stateDirectory: directory)
         state.markUnloadComplete(source: "test")
 
         state.signOut()
 
         XCTAssertNil(state.lastUnloadDone)
-        XCTAssertNil(AppState(stateDirectory: directory).lastUnloadDone)
+        XCTAssertNil(AppState.forTesting(stateDirectory: directory).lastUnloadDone)
     }
 
     @MainActor
@@ -105,7 +134,7 @@ final class AppStateTests: XCTestCase {
 
     @MainActor
     func testMarkDoneActionStopsTimer() async {
-        let state = AppState()
+        let state = AppState.forTesting()
         state.homeArrivalTimer.start(duration: 60)
 
         await state.handleNotificationAction(NotificationAction.markDone, category: NotificationCategory.carUnload)
@@ -115,7 +144,7 @@ final class AppStateTests: XCTestCase {
 
     @MainActor
     func testActionFromOtherCategoryIsIgnored() async {
-        let state = AppState()
+        let state = AppState.forTesting()
         state.homeArrivalTimer.start(duration: 60)
         defer { state.homeArrivalTimer.cancel() }
 
@@ -126,13 +155,13 @@ final class AppStateTests: XCTestCase {
 
     @MainActor
     func testSnoozeActionCompletes() async {
-        let state = AppState()
+        let state = AppState.forTesting()
         await state.handleNotificationAction(NotificationAction.snooze, category: NotificationCategory.carUnload)
     }
 
     @MainActor
     func testSignOutClearsSession() async {
-        let state = AppState()
+        let state = AppState.forTesting()
         state.isAuthenticated = true
         state.currentUser = AppUser(id: "u1", email: "a@b.c", displayName: "A")
         state.homeArrivalTimer.start(duration: 60)
@@ -146,7 +175,7 @@ final class AppStateTests: XCTestCase {
 
     @MainActor
     func testSignOutClearsTheAccountsData() async {
-        let state = AppState()
+        let state = AppState.forTesting()
         state.isAuthenticated = true
         state.currentUser = AppUser(id: "a", email: "a@b.c", displayName: "A")
         state.shoppingList = [GroceryItem(title: "A's item")]
@@ -160,7 +189,7 @@ final class AppStateTests: XCTestCase {
 
     @MainActor
     func testPreferencesAreNotSavedBeforeTheyLoad() async throws {
-        let state = AppState()
+        let state = AppState.forTesting()
         state.currentUser = AppUser(id: "unloaded", email: "u@b.c", displayName: "U")
         state.preferences.homeArrivalDelay = 42
 
@@ -172,7 +201,7 @@ final class AppStateTests: XCTestCase {
 
     @MainActor
     func testPreferencesSaveOnceLoaded() async throws {
-        let state = AppState()
+        let state = AppState.forTesting()
         let user = AppUser(id: "loaded", email: "l@b.c", displayName: "L")
         state.currentUser = user
         state.startSync(for: user)
@@ -188,7 +217,7 @@ final class AppStateTests: XCTestCase {
 
     @MainActor
     func testSyncDeliversListChangesUntilSignOut() async throws {
-        let state = AppState()
+        let state = AppState.forTesting()
         let user = AppUser(id: "sync-user", email: "s@b.c", displayName: "S")
         state.currentUser = user
         state.isAuthenticated = true
@@ -209,7 +238,7 @@ final class AppStateTests: XCTestCase {
 
     @MainActor
     func testQuickAddRequiresSignIn() async {
-        let state = AppState()
+        let state = AppState.forTesting()
         do {
             _ = try await state.quickAdd("Milk")
             XCTFail("Expected notSignedIn")
@@ -220,7 +249,7 @@ final class AppStateTests: XCTestCase {
 
     @MainActor
     func testQuickAddRejectsBlankItem() async {
-        let state = AppState()
+        let state = AppState.forTesting()
         state.isAuthenticated = true
         do {
             _ = try await state.quickAdd("   \n")
@@ -232,7 +261,7 @@ final class AppStateTests: XCTestCase {
 
     @MainActor
     func testQuickAddTrimsAndInsertsAtTop() async throws {
-        let state = AppState()
+        let state = AppState.forTesting()
         state.isAuthenticated = true
         state.currentUser = AppUser(id: "quick", email: "q@b.c", displayName: "Q")
 
@@ -244,7 +273,7 @@ final class AppStateTests: XCTestCase {
 
     @MainActor
     func testRestoreSessionWithMockBackendStaysSignedOut() async {
-        let state = AppState()
+        let state = AppState.forTesting()
         state.restoreSession()
 
         XCTAssertFalse(state.isAuthenticated)

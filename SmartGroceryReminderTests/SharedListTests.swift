@@ -149,7 +149,7 @@ final class MockSharedListTests: XCTestCase {
 final class AppStateSharedListTests: XCTestCase {
     @MainActor
     private func signedInState(_ userId: String) -> AppState {
-        let state = AppState()
+        let state = AppState.forTesting()
         let user = AppUser(id: userId, email: "\(userId)@b.c", displayName: userId)
         state.currentUser = user
         state.isAuthenticated = true

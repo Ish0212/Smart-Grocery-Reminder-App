@@ -84,7 +84,7 @@ final class AppStateWidgetTests: XCTestCase {
     @MainActor
     func testAppWritesSnapshotsForTheListCountdownAndSignOut() async throws {
         let store = WidgetSnapshotStore(url: temporaryFileURL("widget-snapshot.json"))
-        let state = AppState(widgetStore: store)
+        let state = AppState.forTesting(widgetStore: store)
         let user = AppUser(id: "widget-user", email: "w@b.c", displayName: "W")
         state.currentUser = user
         state.isAuthenticated = true
