@@ -64,14 +64,24 @@ final class AppStateTests: XCTestCase {
     }
 
     @MainActor
-    func testCarUnloadPlanFallsBackToUncheckedItems() async throws {
+    func testCarUnloadPlanFallsBackToUncheckedItemsOnlyWhenSimulated() async throws {
         let now = Date()
         let items = [
             GroceryItem(title: "Old", isCompleted: true, updatedAt: now.addingTimeInterval(-4 * 60 * 60)),
             GroceryItem(title: "Milk"),
             GroceryItem(title: "Bread"),
         ]
-        let plan = try XCTUnwrap(AppState.carUnloadReminderPlan(preferences: .default, items: items, now: now))
+        XCTAssertNil(AppState.carUnloadReminderPlan(preferences: .default, items: items, now: now))
+        let plan = try XCTUnwrap(AppState.carUnloadReminderPlan(preferences: .default, items: items, now: now, isSimulated: true))
+        XCTAssertEqual(plan.itemCount, 2)
+    }
+
+    @MainActor
+    func testCarUnloadPlanCountsUncheckedItemsAfterAStoreVisit() async throws {
+        let now = Date()
+        let items = [GroceryItem(title: "Milk"), GroceryItem(title: "Bread")]
+        let context = AppState.ReminderContext(lastStoreVisit: now.addingTimeInterval(-45 * 60))
+        let plan = try XCTUnwrap(AppState.carUnloadReminderPlan(preferences: .default, items: items, now: now, context: context))
         XCTAssertEqual(plan.itemCount, 2)
     }
 
@@ -125,8 +135,9 @@ final class AppStateTests: XCTestCase {
         prefs.repeatCarUnloadReminder = false
         prefs.carUnloadRepeatInterval = 120
         let items = [GroceryItem(title: "Milk"), GroceryItem(title: "Eggs"), GroceryItem(title: "Done", isCompleted: true, updatedAt: Date().addingTimeInterval(-24 * 60 * 60))]
+        let afterShopping = AppState.ReminderContext(lastStoreVisit: Date().addingTimeInterval(-10 * 60))
 
-        let plan = try XCTUnwrap(AppState.carUnloadReminderPlan(preferences: prefs, items: items))
+        let plan = try XCTUnwrap(AppState.carUnloadReminderPlan(preferences: prefs, items: items, context: afterShopping))
         XCTAssertEqual(plan.itemCount, 2)
         XCTAssertFalse(plan.repeats)
         XCTAssertEqual(plan.repeatInterval, 120)

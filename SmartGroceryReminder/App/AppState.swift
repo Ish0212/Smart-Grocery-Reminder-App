@@ -215,9 +215,9 @@ final class AppState: ObservableObject {
         switch event.kind {
         case .home:
             guard let plan = carUnloadReminderPlan(
-                preferences: preferences, items: items, now: now, context: context
+                preferences: preferences, items: items, now: now, context: context, isSimulated: event.isSimulated
             ) else {
-                return .ignore(reason: "nothing bought recently and no unchecked items")
+                return .ignore(reason: event.isSimulated ? "nothing bought recently and no unchecked items" : noShoppingTripReason)
             }
             return .scheduleUnload(
                 delay: effectiveDelay(configured: preferences.homeArrivalDelay, elapsed: elapsed),
@@ -250,8 +250,11 @@ final class AppState: ObservableObject {
 
     private func processPendingLocationEvents() {
         guard sessionDataLoaded, !pendingLocationEvents.isEmpty else { return }
+        let events = pendingLocationEvents
+        pendingLocationEvents.removeAll()
+        recordStoreVisits(in: events)
         let now = Date()
-        let decisions = Self.coalesced(pendingLocationEvents).map { event in
+        let decisions = Self.coalesced(events).map { event in
             (event, Self.decision(
                 for: event,
                 preferences: preferences,
@@ -260,11 +263,11 @@ final class AppState: ObservableObject {
                 context: ReminderContext(
                     lastHandled: cooldowns.lastHandled[Self.cooldownKey(event.kind, event.placeId)],
                     lastUnloadDone: cooldowns.lastUnloadDone,
+                    lastStoreVisit: cooldowns.lastStoreVisit,
                     userId: currentUser?.id
                 )
             ))
         }
-        pendingLocationEvents.removeAll()
         Task {
             for (event, decision) in decisions {
                 await self.apply(decision, for: event)
@@ -283,7 +286,8 @@ final class AppState: ObservableObject {
                 repeats: repeats,
                 repeatInterval: repeatInterval
             )
-            diagnostics.record(.unloadScheduled, "Unload reminder in \(Self.describe(seconds: delay)) for \(itemCount) item(s)", placeKind: .home)
+            let what = itemCount == 0 ? "your groceries" : "\(itemCount) item(s)"
+            diagnostics.record(.unloadScheduled, "Unload reminder in \(Self.describe(seconds: delay)) for \(what)", placeKind: .home)
             recordHandled(event.kind, event.placeId, at: event.date)
         case .notifyStore(let itemCount):
             await notificationService.sendGroceryStoreReminder(itemCount: itemCount)
@@ -299,6 +303,8 @@ final class AppState: ObservableObject {
         /// When each place (by region ID) last produced a reminder.
         var lastHandled: [String: Date] = [:]
         var lastUnloadDone: Date?
+        /// The last real enter into a saved grocery store, whether or not it sent a reminder.
+        var lastStoreVisit: Date?
     }
 
     static func cooldownKey(_ kind: GeoPlace.PlaceKind, _ placeId: String) -> String {
@@ -308,6 +314,16 @@ final class AppState: ObservableObject {
     private func recordHandled(_ kind: GeoPlace.PlaceKind, _ placeId: String, at date: Date) {
         let key = Self.cooldownKey(kind, placeId)
         cooldowns.lastHandled[key] = max(cooldowns.lastHandled[key] ?? date, date)
+        try? cooldownStore?.save(cooldowns)
+    }
+
+    /// A real store enter is evidence of a shopping trip even when it sends no reminder (inside the
+    /// cooldown, or with store reminders off). Recorded before the batch's decisions, so a home
+    /// arrival queued along with it already sees the visit.
+    private func recordStoreVisits(in events: [LocationEvent]) {
+        let visits = events.filter { $0.kind == .groceryStore && !$0.isSimulated }.map(\.date)
+        guard let latest = visits.max() else { return }
+        cooldowns.lastStoreVisit = max(cooldowns.lastStoreVisit ?? latest, latest)
         try? cooldownStore?.save(cooldowns)
     }
 
@@ -347,17 +363,25 @@ final class AppState: ObservableObject {
         preferences.storeEntryReminderEnabled && openItemCount > 0
     }
 
-    /// Items checked off this recently were bought on this trip, so they're in the car.
+    /// Items checked off this recently were bought on this trip, so they're in the car; a saved
+    /// store entered this recently was a shopping trip.
     static let recentPurchaseWindow: TimeInterval = 3 * 60 * 60
 
-    /// Counts what was just bought (and not yet brought in); with nothing bought recently, falls
-    /// back to the unchecked items. Returns nil when there is nothing to unload.
+    /// Logged for a real home arrival with no sign of shopping, so a field tester can see why nothing came.
+    static let noShoppingTripReason = "no shopping trip in the last 3 h (check off what you bought, or visit a saved store)"
+
+    /// An unload reminder needs a shopping trip, or every commute and dog walk would ask about
+    /// groceries. Counts what was just bought (and not yet brought in); with nothing checked off, a
+    /// recent visit to a saved store counts the unchecked items, where 0 means "your groceries".
+    /// Simulated arrivals (demos, field tests) fall back to the unchecked items instead.
+    /// Returns nil when there is nothing to unload.
     /// Only the context's user's check-offs count (items with no `completedBy` count too).
     static func carUnloadReminderPlan(
         preferences: UserPreferences,
         items: [GroceryItem],
         now: Date = Date(),
-        context: ReminderContext = ReminderContext()
+        context: ReminderContext = ReminderContext(),
+        isSimulated: Bool = false
     ) -> (itemCount: Int, repeats: Bool, repeatInterval: TimeInterval)? {
         let boughtCount = items.filter { item in
             let age = now.timeIntervalSince(item.updatedAt)
@@ -365,8 +389,21 @@ final class AppState: ObservableObject {
             let boughtBySomeoneElse = item.completedBy.map { $0 != context.userId } ?? false
             return item.isCompleted && age >= 0 && age <= recentPurchaseWindow && !alreadyInside && !boughtBySomeoneElse
         }.count
-        let itemCount = boughtCount > 0 ? boughtCount : items.filter { !$0.isCompleted }.count
-        guard itemCount > 0 else { return nil }
+        let uncheckedCount = items.filter { !$0.isCompleted }.count
+        let itemCount: Int
+        if boughtCount > 0 {
+            itemCount = boughtCount
+        } else if isSimulated {
+            guard uncheckedCount > 0 else { return nil }
+            itemCount = uncheckedCount
+        } else if let visit = context.lastStoreVisit,
+                  (0...recentPurchaseWindow).contains(now.timeIntervalSince(visit)),
+                  context.lastUnloadDone.map({ visit > $0 }) ?? true {
+            // Shopped without checking anything off: the unchecked items are the best guess.
+            itemCount = uncheckedCount
+        } else {
+            return nil
+        }
         return (itemCount, preferences.repeatCarUnloadReminder, preferences.carUnloadRepeatInterval)
     }
 
@@ -380,8 +417,8 @@ final class AppState: ObservableObject {
         case NotificationAction.markDone:
             markUnloadComplete(source: "notification")
         case NotificationAction.snooze:
-            let openCount = itemCount ?? (itemsLoaded ? shoppingList.filter { !$0.isCompleted }.count : 0)
-            guard openCount > 0 else {
+            // A count of 0 in the notification is a reminder about "your groceries"; it repeats as is.
+            guard let openCount = itemCount ?? (itemsLoaded ? shoppingList.filter { !$0.isCompleted }.count : nil) else {
                 diagnostics.record(.skipped, "Remind again: no item count and the list hasn't loaded", placeKind: .home)
                 return
             }
@@ -410,6 +447,9 @@ final class AppState: ObservableObject {
 
     /// When the groceries were last marked brought in.
     var lastUnloadDone: Date? { cooldowns.lastUnloadDone }
+
+    /// When the phone last really entered a saved grocery store.
+    var lastStoreVisit: Date? { cooldowns.lastStoreVisit }
 
 
     // MARK: - Session

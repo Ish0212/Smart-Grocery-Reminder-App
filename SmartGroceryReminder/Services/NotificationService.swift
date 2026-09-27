@@ -72,13 +72,19 @@ final class NotificationService: ObservableObject {
     }
 
     /// The car-unload reminder. It carries the item count so "Remind again" works even when the
-    /// action cold-launches the app before the list has loaded.
+    /// action cold-launches the app before the list has loaded. A count of 0 (a store visit with
+    /// nothing on the list) asks about "your groceries".
     static func carUnloadContent(itemCount: Int, isRepeat: Bool) -> UNMutableNotificationContent {
         let content = UNMutableNotificationContent()
         content.title = isRepeat ? "Still need to unload?" : "Groceries still in the car?"
-        content.body = itemCount == 1
-            ? "You have 1 item waiting — don't forget to bring it inside."
-            : "You have \(itemCount) items waiting — don't forget to bring them inside."
+        switch itemCount {
+        case 0:
+            content.body = "Don't forget to bring your groceries inside."
+        case 1:
+            content.body = "You have 1 item waiting — don't forget to bring it inside."
+        default:
+            content.body = "You have \(itemCount) items waiting — don't forget to bring them inside."
+        }
         content.sound = .default
         content.categoryIdentifier = NotificationCategory.carUnload
         content.userInfo = [NotificationUserInfo.itemCount: itemCount]
