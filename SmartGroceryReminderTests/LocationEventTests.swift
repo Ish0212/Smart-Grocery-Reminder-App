@@ -454,6 +454,27 @@ final class LocationEventTests: XCTestCase {
     }
 
     @MainActor
+    func testSignOutCancelsTheBatchInFlight() async throws {
+        let directory = temporaryFileURL("state").deletingLastPathComponent()
+        let state = try await loadedSession(
+            items: [GroceryItem(title: "Milk", isCompleted: true, completedBy: "session-user")],
+            stateDirectory: directory
+        )
+
+        // No await in between, so the batch can't start before the sign-out.
+        state.handleLocationEvent(enter(home))
+        let batch = try XCTUnwrap(state.locationBatchTask)
+        state.signOut()
+        await batch.value
+
+        XCTAssertFalse(state.homeArrivalTimer.isActive)
+        XCTAssertTrue(state.notificationService.scheduledForTesting.isEmpty)
+        XCTAssertFalse(state.diagnostics.entries.contains { $0.kind == .unloadScheduled })
+        let cooldownFile = directory.appendingPathComponent("reminder-cooldowns.json")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: cooldownFile.path))
+    }
+
+    @MainActor
     func testRunningOutOfBackgroundTimeDropsQueuedEvents() {
         let activity = FakeBackgroundActivity()
         let state = AppState.forTesting(backgroundActivity: activity)

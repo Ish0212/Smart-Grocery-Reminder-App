@@ -25,6 +25,8 @@ final class AppState: ObservableObject {
 
     /// Location events wait here until the session's list and preferences have loaded.
     private(set) var pendingLocationEvents: [LocationEvent] = []
+    /// Applies the latest batch of location decisions; cancelled on sign-out.
+    private(set) var locationBatchTask: Task<Void, Never>?
     var sessionDataLoaded: Bool { itemsLoaded && preferencesLoaded }
 
     let authService: AuthServiceProtocol
@@ -271,6 +273,7 @@ final class AppState: ObservableObject {
         pendingLocationEvents.removeAll()
         recordStoreVisits(in: events)
         let now = Date()
+        let userId = currentUser?.id
         let decisions = Self.coalesced(events).map { event in
             (event, Self.decision(
                 for: event,
@@ -281,19 +284,22 @@ final class AppState: ObservableObject {
                     lastHandled: cooldowns.lastHandled[Self.cooldownKey(event.kind, event.placeId)],
                     lastUnloadDone: cooldowns.lastUnloadDone,
                     lastStoreVisit: cooldowns.lastStoreVisit,
-                    userId: currentUser?.id
+                    userId: userId
                 )
             ))
         }
-        Task {
+        locationBatchTask = Task {
             for (event, decision) in decisions {
-                await self.apply(decision, for: event)
+                // Signed out (or into another account) meanwhile: don't start the timer, schedule
+                // the reminder or recreate the cleared cooldowns. signOut ended the background activity.
+                guard !Task.isCancelled, let userId, self.currentUser?.id == userId else { return }
+                await self.apply(decision, for: event, userId: userId)
             }
             self.endBackgroundActivity()
         }
     }
 
-    private func apply(_ decision: LocationEventDecision, for event: LocationEvent) async {
+    private func apply(_ decision: LocationEventDecision, for event: LocationEvent, userId: String) async {
         switch decision {
         case let .scheduleUnload(delay, itemCount, repeats, repeatInterval):
             homeArrivalTimer.start(duration: preferences.homeArrivalDelay, startedAt: event.date)
@@ -303,11 +309,13 @@ final class AppState: ObservableObject {
                 repeats: repeats,
                 repeatInterval: repeatInterval
             )
+            guard currentUser?.id == userId else { return }
             let what = itemCount == 0 ? "your groceries" : "\(itemCount) item(s)"
             diagnostics.record(.unloadScheduled, "Unload reminder in \(Self.describe(seconds: delay)) for \(what)", placeKind: .home)
             recordHandled(event.kind, event.placeId, at: event.date)
         case .notifyStore(let itemCount):
             await notificationService.sendGroceryStoreReminder(itemCount: itemCount)
+            guard currentUser?.id == userId else { return }
             diagnostics.record(.storeReminderSent, "Store reminder sent for \(itemCount) item(s)", placeKind: .groceryStore)
             recordHandled(event.kind, event.placeId, at: event.date)
         case .ignore(let reason):
@@ -497,6 +505,8 @@ final class AppState: ObservableObject {
         authService.signOut()
         stopSync()
         pendingLocationEvents.removeAll()
+        locationBatchTask?.cancel()
+        locationBatchTask = nil
         endBackgroundActivity()
         isAuthenticated = false
         currentUser = nil
