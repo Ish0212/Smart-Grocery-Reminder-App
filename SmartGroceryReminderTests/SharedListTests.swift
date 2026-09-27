@@ -137,7 +137,7 @@ final class MockSharedListTests: XCTestCase {
     func testOnlyMembersCanReadAList() async throws {
         let service = MockShoppingListService()
         try await service.upsert(item: GroceryItem(title: "Milk"), listId: "alice")
-        let code = try await service.createInvite(userId: "alice")
+        let code = await service.createInvite(userId: "alice")
         try await service.joinList(code: code, userId: "bob")
 
         let bobsView = try await first(await service.observeItems(listId: "alice", userId: "bob"))
@@ -152,7 +152,7 @@ final class MockSharedListTests: XCTestCase {
 
     func testARemovedMemberIsCutOffAndCanStillLeave() async throws {
         let service = MockShoppingListService()
-        let code = try await service.createInvite(userId: "alice")
+        let code = await service.createInvite(userId: "alice")
         try await service.joinList(code: code, userId: "bob")
         var bobsItems = await service.observeItems(listId: "alice", userId: "bob").makeAsyncIterator()
         _ = try await bobsItems.next()
@@ -169,7 +169,7 @@ final class MockSharedListTests: XCTestCase {
         try await service.leaveList(userId: "bob")
         let active = try await first(await service.observeActiveList(userId: "bob"))
         XCTAssertEqual(active, "bob")
-        let info = try await service.listInfo(listId: "alice")
+        let info = await service.listInfo(listId: "alice")
         XCTAssertEqual(info.memberIds, ["alice"])
     }
 

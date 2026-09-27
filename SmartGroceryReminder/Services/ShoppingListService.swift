@@ -449,7 +449,12 @@ final class FirestoreShoppingListService: ShoppingListServiceProtocol {
         if item.completedBy == nil {
             fields["completedBy"] = FieldValue.delete()
         }
-        itemsCollection(listId).document(item.id).updateData(fields, completion: nil)
+        updateWithoutWaiting(itemsCollection(listId).document(item.id), fields)
+    }
+
+    /// Outside an async function, `updateData` resolves to the call that doesn't wait for the server.
+    private func updateWithoutWaiting(_ document: DocumentReference, _ fields: [String: Any]) {
+        document.updateData(fields)
     }
 
     func delete(itemId: String, listId: String) async throws {
