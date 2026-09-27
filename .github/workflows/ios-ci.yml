@@ -107,6 +107,18 @@ jobs:
           echo "App icon: $ICON"
           test "$ICON" = AppIcon
 
+      # Both Info.plists read MARKETING_VERSION / CURRENT_PROJECT_VERSION from project.yml; they must be set and equal.
+      - name: Check the app and widget versions match
+        run: |
+          APP=build/DerivedData/Build/Products/Debug-iphonesimulator/SmartGroceryReminder.app
+          for KEY in CFBundleShortVersionString CFBundleVersion; do
+            A=$(plutil -extract $KEY raw -o - "$APP/Info.plist")
+            W=$(plutil -extract $KEY raw -o - "$APP/PlugIns/SmartGroceryWidget.appex/Info.plist")
+            echo "$KEY: app $A, widget $W"
+            grep -Eq '^[0-9]+(\.[0-9]+)*$' <<< "$A"
+            test "$A" = "$W"
+          done
+
       - name: Upload result bundle
         if: failure()
         uses: actions/upload-artifact@v4

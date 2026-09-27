@@ -35,6 +35,9 @@ targets:
       CODE_SIGN_ENTITLEMENTS: SmartGroceryReminder/SmartGroceryReminder.entitlements
       TARGETED_DEVICE_FAMILY: "1"
       IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+      # The widget must ship the same version as the app (App Store Connect flags a mismatch).
+      MARKETING_VERSION: "1.0"
+      CURRENT_PROJECT_VERSION: "1"
     scheme:
       testTargets:
         - SmartGroceryReminderTests
@@ -56,6 +59,9 @@ targets:
       CODE_SIGN_ENTITLEMENTS: SmartGroceryWidget/SmartGroceryWidget.entitlements
       TARGETED_DEVICE_FAMILY: "1"
       IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+      # Keep equal to the app's.
+      MARKETING_VERSION: "1.0"
+      CURRENT_PROJECT_VERSION: "1"
       # Shared/MarkBroughtInIntent.swift compiles a no-op body in the widget.
       SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) WIDGET_EXTENSION"
   SmartGroceryReminderTests:
