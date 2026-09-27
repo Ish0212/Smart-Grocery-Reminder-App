@@ -189,7 +189,8 @@ actor MockShoppingListService: ShoppingListServiceProtocol {
 }
 
 /// Firestore storage:
-/// - `users/{uid}`: `activeListId`, plus `preferences/main` (and legacy `items/*`, migrated once);
+/// - `users/{uid}`: `activeListId` and, after joining someone's list, the `joinCode` used (the rules' proof
+///   of invite), plus `preferences/main` (and legacy `items/*`, migrated once);
 /// - `lists/{listId}`: `ownerId`, `memberIds`, with the shared `items/{itemId}` (a list's ID is its owner's uid);
 /// - `invites/{code}`: `listId`, `createdBy`, `expiresAt`.
 /// Reads come from snapshot listeners, which serve the local cache first (also offline) and then live updates.
@@ -286,19 +287,22 @@ final class FirestoreShoppingListService: ShoppingListServiceProtocol {
               let expiresAt = invite.get("expiresAt") as? Timestamp else { throw SharedListError.invalidCode }
         guard expiresAt.dateValue() > Date() else { throw SharedListError.expiredCode }
 
-        if listId != userId, !(try await isMember(of: listId)) {
-            do {
-                // The rules check `joinCode` against the invite and allow adding only yourself.
-                try await listDocument(listId).updateData([
-                    "memberIds": FieldValue.arrayUnion([userId]),
-                    "joinCode": code,
-                ])
-            } catch let error as FirestoreErrorCode where error.code == .permissionDenied {
-                // The invite checked out, so a denial here means the list is full.
-                throw SharedListError.listFull
-            }
+        guard listId != userId, !(try await isMember(of: listId)) else {
+            // Your own list, or one you're already on: just switch to it.
+            try await userDocument(userId).setData(["activeListId": listId], merge: true)
+            return
         }
-        try await userDocument(userId).setData(["activeListId": listId], merge: true)
+        // One batch: the rules allow adding only yourself, and check the `joinCode` in your own
+        // user document (as it will be after this batch) against the invite.
+        let batch = db.batch()
+        batch.updateData(["memberIds": FieldValue.arrayUnion([userId])], forDocument: listDocument(listId))
+        batch.setData(["activeListId": listId, "joinCode": code], forDocument: userDocument(userId), merge: true)
+        do {
+            try await batch.commit()
+        } catch let error as FirestoreErrorCode where error.code == .permissionDenied {
+            // The invite checked out, so a denial here means the list is full.
+            throw SharedListError.listFull
+        }
     }
 
     /// Non-members can't read a list, so a denied read means "not a member".
@@ -317,7 +321,12 @@ final class FirestoreShoppingListService: ShoppingListServiceProtocol {
         guard listId != userId else { throw SharedListError.cannotLeaveOwnList }
         let batch = db.batch()
         batch.updateData(["memberIds": FieldValue.arrayRemove([userId])], forDocument: listDocument(listId))
-        batch.setData(["activeListId": userId], forDocument: userDocument(userId), merge: true)
+        // Clearing the invite code means coming back takes a code again.
+        batch.setData(
+            ["activeListId": userId, "joinCode": FieldValue.delete()],
+            forDocument: userDocument(userId),
+            merge: true
+        )
         try await batch.commit()
     }
 

@@ -7,6 +7,7 @@ import {
   arrayUnion,
   collection,
   deleteDoc,
+  deleteField,
   doc,
   getDoc,
   getDocs,
@@ -58,6 +59,25 @@ async function seedSharedList() {
   await seed("lists/alice/items/item-1", item());
 }
 
+/// The batch FirestoreShoppingListService.joinList commits: the list only gains the joiner, and the
+/// proof of invite goes in the joiner's own user document.
+function join(uid, code, members = arrayUnion(uid)) {
+  const db = as(uid);
+  const batch = writeBatch(db);
+  batch.update(doc(db, "lists/alice"), { memberIds: members });
+  batch.set(doc(db, `users/${uid}`), { activeListId: "alice", joinCode: code }, { merge: true });
+  return batch.commit();
+}
+
+/// The batch FirestoreShoppingListService.leaveList commits, which also clears the proof of invite.
+function leave(uid) {
+  const db = as(uid);
+  const batch = writeBatch(db);
+  batch.update(doc(db, "lists/alice"), { memberIds: arrayRemove(uid) });
+  batch.set(doc(db, `users/${uid}`), { activeListId: uid, joinCode: deleteField() }, { merge: true });
+  return batch.commit();
+}
+
 describe("creating a list", () => {
   test("you can create your own list", async () => {
     await assertSucceeds(setDoc(doc(as("alice"), "lists/alice"), { ownerId: "alice", memberIds: ["alice"] }));
@@ -67,6 +87,7 @@ describe("creating a list", () => {
     await assertFails(setDoc(doc(as("alice"), "lists/bob"), { ownerId: "bob", memberIds: ["bob"] }));
     await assertFails(setDoc(doc(as("alice"), "lists/alice"), { ownerId: "alice", memberIds: ["alice", "carol"] }));
     await assertFails(setDoc(doc(signedOut(), "lists/alice"), { ownerId: "alice", memberIds: ["alice"] }));
+    await assertFails(setDoc(doc(as("alice"), "lists/alice"), { ownerId: "alice", memberIds: ["alice"], joinCode: "GOOD2345" }));
   });
 
   test("lists can't be deleted", async () => {
@@ -136,9 +157,6 @@ describe("joining", () => {
     await seed("invites/DAVE2345", { listId: "dave", createdBy: "dave", expiresAt: inDays(7) });
   });
 
-  const join = (uid, code, members = arrayUnion(uid)) =>
-    updateDoc(doc(as(uid), "lists/alice"), { memberIds: members, joinCode: code });
-
   test("works with a valid invite, and the new member sees the items", async () => {
     await assertSucceeds(join("carol", "GOOD2345"));
     await assertSucceeds(getDocs(collection(as("carol"), "lists/alice/items")));
@@ -151,10 +169,31 @@ describe("joining", () => {
     await assertFails(join("carol", "DAVE2345"));
   });
 
+  test("fails when the proof isn't in the joiner's own user document", async () => {
+    // Saved without a code, e.g. by an earlier sign-in.
+    await seed("users/carol", { activeListId: "carol" });
+    await assertFails(updateDoc(doc(as("carol"), "lists/alice"), { memberIds: arrayUnion("carol") }));
+    // The way older app versions joined: the code on the list itself.
+    await assertFails(updateDoc(doc(as("carol"), "lists/alice"), { memberIds: arrayUnion("carol"), joinCode: "GOOD2345" }));
+    // Someone else's user document.
+    await seed("users/eve", { activeListId: "alice", joinCode: "GOOD2345" });
+    await assertFails(updateDoc(doc(as("carol"), "lists/alice"), { memberIds: arrayUnion("carol") }));
+  });
+
+  test("fails when the proof isn't a code", async () => {
+    for (const code of [12345678, ["GOOD2345"], null, "", "GOOD2345/x/y", "../invites/GOOD2345"]) {
+      await assertFails(join("carol", code));
+    }
+  });
+
   test("a joiner can only add themselves", async () => {
     await assertFails(join("carol", "GOOD2345", arrayUnion("carol", "eve")));
     await assertFails(join("carol", "GOOD2345", ["carol"]));
-    await assertFails(updateDoc(doc(as("carol"), "lists/alice"), { memberIds: arrayUnion("carol"), joinCode: "GOOD2345", ownerId: "carol" }));
+    const db = as("carol");
+    const batch = writeBatch(db);
+    batch.update(doc(db, "lists/alice"), { memberIds: arrayUnion("carol"), ownerId: "carol" });
+    batch.set(doc(db, "users/carol"), { activeListId: "alice", joinCode: "GOOD2345" }, { merge: true });
+    await assertFails(batch.commit());
   });
 
   test("the list is capped at 10 members", async () => {
@@ -162,6 +201,42 @@ describe("joining", () => {
     await seed("lists/alice", { ownerId: "alice", memberIds: eight });
     await assertSucceeds(join("carol", "GOOD2345"));
     await assertFails(join("eve", "GOOD2345"));
+  });
+
+  test("someone already on the list only switches to it", async () => {
+    // The app checks membership first and then only sets activeListId.
+    await assertSucceeds(getDoc(doc(as("bob"), "lists/alice")));
+    await assertSucceeds(setDoc(doc(as("bob"), "users/bob"), { activeListId: "alice" }, { merge: true }));
+    await assertFails(join("bob", "GOOD2345"));
+  });
+});
+
+describe("a joinCode stored on the list by older app versions", () => {
+  beforeEach(async () => {
+    await seed("lists/alice", { ownerId: "alice", memberIds: ["alice", "bob"], joinCode: "GOOD2345" });
+    await seed("lists/alice/items/item-1", item());
+    await seed("invites/GOOD2345", { listId: "alice", createdBy: "alice", expiresAt: inDays(7) });
+  });
+
+  test("lets nobody in without a code", async () => {
+    await assertFails(updateDoc(doc(as("mallory"), "lists/alice"), { memberIds: arrayUnion("mallory") }));
+    await assertFails(getDocs(collection(as("mallory"), "lists/alice/items")));
+  });
+
+  test("doesn't let a member who left, or was removed, back in", async () => {
+    await assertSucceeds(updateDoc(doc(as("bob"), "lists/alice"), { memberIds: arrayRemove("bob") }));
+    await assertFails(updateDoc(doc(as("bob"), "lists/alice"), { memberIds: arrayUnion("bob") }));
+
+    await seed("lists/alice", { ownerId: "alice", memberIds: ["alice", "carol"], joinCode: "GOOD2345" });
+    await assertSucceeds(updateDoc(doc(as("alice"), "lists/alice"), { memberIds: arrayRemove("carol") }));
+    await assertFails(updateDoc(doc(as("carol"), "lists/alice"), { memberIds: arrayUnion("carol") }));
+  });
+
+  test("the owner can remove it, but not change or add one", async () => {
+    await assertFails(updateDoc(doc(as("bob"), "lists/alice"), { joinCode: deleteField() }));
+    await assertFails(updateDoc(doc(as("alice"), "lists/alice"), { joinCode: "OTHR2345" }));
+    await assertSucceeds(updateDoc(doc(as("alice"), "lists/alice"), { joinCode: deleteField() }));
+    await assertFails(updateDoc(doc(as("alice"), "lists/alice"), { joinCode: "GOOD2345" }));
   });
 });
 
@@ -171,6 +246,24 @@ describe("leaving and managing members", () => {
   test("a member can leave", async () => {
     await assertSucceeds(updateDoc(doc(as("bob"), "lists/alice"), { memberIds: arrayRemove("bob") }));
     await assertFails(getDocs(collection(as("bob"), "lists/alice/items")));
+  });
+
+  test("the app's leave clears the proof, so coming back takes a code again", async () => {
+    await seed("invites/GOOD2345", { listId: "alice", createdBy: "alice", expiresAt: inDays(7) });
+    await assertSucceeds(join("carol", "GOOD2345"));
+    await assertSucceeds(leave("carol"));
+    await assertFails(updateDoc(doc(as("carol"), "lists/alice"), { memberIds: arrayUnion("carol") }));
+    await assertSucceeds(join("carol", "GOOD2345"));
+  });
+
+  test("a leaver's leftover proof stops working once the invite is revoked", async () => {
+    await seed("invites/GOOD2345", { listId: "alice", createdBy: "alice", expiresAt: inDays(7) });
+    await assertSucceeds(join("carol", "GOOD2345"));
+    // Left without clearing it (an older app version, or on purpose).
+    await assertSucceeds(updateDoc(doc(as("carol"), "lists/alice"), { memberIds: arrayRemove("carol") }));
+    await assertSucceeds(deleteDoc(doc(as("alice"), "invites/GOOD2345")));
+    await assertFails(updateDoc(doc(as("carol"), "lists/alice"), { memberIds: arrayUnion("carol") }));
+    await assertFails(join("carol", "GOOD2345"));
   });
 
   test("a member can't remove others or take over the list", async () => {
