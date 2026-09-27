@@ -120,6 +120,22 @@ describe("list items", () => {
     await assertFails(setDoc(doc(as("bob"), "lists/alice/items/item-2"), item({ id: "item-2", completedBy: 7 })));
   });
 
+  test("completedBy can only name the writer, or stay as it was", async () => {
+    await assertFails(setDoc(doc(as("bob"), "lists/alice/items/item-2"), item({ id: "item-2", isCompleted: true, completedBy: "alice" })));
+    await assertFails(updateDoc(doc(as("bob"), "lists/alice/items/item-1"), { isCompleted: true, completedBy: "alice" }));
+    await assertSucceeds(updateDoc(doc(as("bob"), "lists/alice/items/item-1"), { isCompleted: true, completedBy: "bob" }));
+
+    // alice checked it off: bob can edit it and keep her name on it, but not put someone else's.
+    await seed("lists/alice/items/item-1", item({ isCompleted: true, completedBy: "alice" }));
+    await assertSucceeds(setDoc(doc(as("bob"), "lists/alice/items/item-1"), item({ title: "Oat milk", isCompleted: true, completedBy: "alice" })));
+    await assertFails(updateDoc(doc(as("bob"), "lists/alice/items/item-1"), { completedBy: "carol" }));
+    await assertSucceeds(updateDoc(doc(as("bob"), "lists/alice/items/item-1"), { completedBy: deleteField() }));
+
+    // Unchecking it the way the app does: the whole item, without completedBy.
+    await seed("lists/alice/items/item-1", item({ isCompleted: true, completedBy: "alice" }));
+    await assertSucceeds(setDoc(doc(as("bob"), "lists/alice/items/item-1"), item({ isCompleted: false })));
+  });
+
   test("dates must be timestamps, and both are required", async () => {
     const { createdAt, ...noCreatedAt } = item({ id: "item-2" });
     const { updatedAt, ...noUpdatedAt } = item({ id: "item-2" });

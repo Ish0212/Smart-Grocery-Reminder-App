@@ -32,7 +32,9 @@ service cloud.firestore {
       // list and its items together: in a batch, get() still sees the list as missing.
       match /items/{itemId} {
         allow read, delete: if isOwner(listId) || isListMember(listId);
-        allow create, update: if (isOwner(listId) || isListMember(listId)) && isValidItem(request.resource.data, itemId);
+        allow create, update: if (isOwner(listId) || isListMember(listId))
+          && isValidItem(request.resource.data, itemId)
+          && isHonestCompletedBy();
       }
     }
 
@@ -104,6 +106,15 @@ service cloud.firestore {
         && code is string
         && invite.listId == listId
         && invite.expiresAt > request.time;
+    }
+
+    // completedBy says who checked an item off, which decides whose unload reminder it counts for.
+    // A writer may set it only to themselves or clear it; someone else's stays as it was.
+    function isHonestCompletedBy() {
+      let data = request.resource.data;
+      return !('completedBy' in data)
+        || data.completedBy == request.auth.uid
+        || (resource != null && 'completedBy' in resource.data && data.completedBy == resource.data.completedBy);
     }
 
     function isValidItem(data, itemId) {
