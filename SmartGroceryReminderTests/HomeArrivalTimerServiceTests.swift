@@ -34,6 +34,7 @@ final class HomeArrivalTimerServiceTests: XCTestCase {
 
         XCTAssertFalse(timer.isActive)
         XCTAssertEqual(timer.remainingSeconds, 0)
+        XCTAssertNil(timer.endDate, "No countdown is running")
     }
 
     @MainActor

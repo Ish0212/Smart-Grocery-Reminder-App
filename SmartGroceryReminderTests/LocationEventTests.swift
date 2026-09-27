@@ -828,5 +828,6 @@ final class LocationEventTests: XCTestCase {
 
         timer.start(duration: 600, startedAt: Date().addingTimeInterval(-700))
         XCTAssertFalse(timer.isActive)
+        XCTAssertNil(timer.endDate)
     }
 }

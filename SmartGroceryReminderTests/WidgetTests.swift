@@ -124,4 +124,25 @@ final class AppStateWidgetTests: XCTestCase {
         state.signOut()
         try await waitUntil { store.load() == .signedOut }
     }
+
+    /// A countdown that runs out on its own is cleared, so the snapshot is rewritten without it.
+    @MainActor
+    func testTheCountdownLeavesTheWidgetWhenItEnds() async throws {
+        let store = WidgetSnapshotStore(url: temporaryFileURL("widget-snapshot.json"))
+        let state = AppState.forTesting(widgetStore: store)
+        let user = AppUser(id: "widget-end-user", email: "e@b.c", displayName: "E")
+        state.currentUser = user
+        state.isAuthenticated = true
+        state.startSync(for: user)
+        try await waitUntil { state.itemsLoaded }
+
+        state.homeArrivalTimer.start(duration: 600)
+        try await waitUntil { store.load()?.unloadEndDate != nil }
+
+        state.homeArrivalTimer.refresh(now: Date().addingTimeInterval(601))
+        XCTAssertNil(state.homeArrivalTimer.endDate)
+        try await waitUntil { store.load()?.unloadEndDate == nil }
+        XCTAssertEqual(store.load()?.isSignedIn, true)
+        state.signOut()
+    }
 }
