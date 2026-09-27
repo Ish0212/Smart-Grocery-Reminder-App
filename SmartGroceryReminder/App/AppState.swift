@@ -585,6 +585,15 @@ final class AppState: ObservableObject {
         }
     }
 
+    // MARK: - App lifecycle
+
+    /// The app came to the foreground. The countdown's Timer doesn't fire in the background, the
+    /// outstanding unload can expire and reminders can be delivered, so all three are refreshed.
+    func appDidBecomeActive() {
+        homeArrivalTimer.refresh()
+        refreshUnloadOutstanding()
+        Task { await notificationService.refreshPendingCount() }
+    }
 
     // MARK: - Session
 

@@ -204,6 +204,21 @@ final class AppStateTests: XCTestCase {
         try await waitUntil { service.pendingCount == 0 }
     }
 
+    /// A reminder delivered while the app was in the background is no longer pending.
+    @MainActor
+    func testThePendingCountIsRefreshedWhenTheAppBecomesActive() async throws {
+        let state = AppState.forTesting()
+        let service = state.notificationService
+        await service.sendGroceryStoreReminder(itemCount: 1)
+        XCTAssertEqual(service.pendingCount, 1)
+
+        service.deliverForTesting(NotificationID.storeVisit)
+        XCTAssertEqual(service.pendingCount, 1, "Stale until something refreshes it")
+
+        state.appDidBecomeActive()
+        try await waitUntil { service.pendingCount == 0 }
+    }
+
     /// A reminder left in Notification Center after sign-out must not snooze or write a cooldown.
     @MainActor
     func testReminderActionsAfterSignOutAreIgnored() async throws {

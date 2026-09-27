@@ -62,7 +62,11 @@ struct SettingsView: View {
                 }
             }
             .navigationTitle("Settings")
-            .task { await notificationService.refreshAuthorizationStatus() }
+            .task {
+                await notificationService.refreshAuthorizationStatus()
+                // Reminders delivered since the count was last read are no longer pending.
+                await notificationService.refreshPendingCount()
+            }
             .onChange(of: appState.preferences) { _, _ in
                 Task { await appState.savePreferences() }
             }

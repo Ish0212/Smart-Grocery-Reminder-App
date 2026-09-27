@@ -20,6 +20,12 @@ final class NotificationService: ObservableObject {
     /// Inert mode only: refuse every request, as iOS does when it can't schedule one.
     var refusesRequestsForTesting = false
 
+    /// Inert mode only: the reminder fires, so it's no longer pending. As with iOS, nothing tells
+    /// the app, so `pendingCount` stays as it was until the next refresh.
+    func deliverForTesting(_ identifier: String) {
+        pendingForTesting.remove(identifier)
+    }
+
     /// - Parameter center: `nil` for an inert service that only records what it would schedule and remove.
     init(center: UNUserNotificationCenter? = UNUserNotificationCenter.current()) {
         self.center = center
@@ -201,7 +207,9 @@ final class NotificationService: ObservableObject {
         center.setNotificationCategories([carUnload, store])
     }
 
-    private func refreshPendingCount() async {
+    /// A delivered reminder stops being pending without the app being told, so this also runs
+    /// when Settings appears and when the app becomes active.
+    func refreshPendingCount() async {
         guard let center else {
             pendingCount = pendingForTesting.count
             return
