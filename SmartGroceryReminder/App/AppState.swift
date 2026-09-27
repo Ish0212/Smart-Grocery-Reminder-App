@@ -179,26 +179,32 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// - Parameters:
-    ///   - lastHandled: when this place last produced a reminder.
-    ///   - lastUnloadDone: when the groceries were last marked brought in. For home it also starts
-    ///     the cooldown, and items checked off before it are already inside.
-    ///   - userId: whose phone this is; on a shared list, other people's check-offs aren't in this car.
+    /// What the app remembers from earlier events, for deciding on a new one.
+    struct ReminderContext: Equatable {
+        /// When this place last produced a reminder.
+        var lastHandled: Date?
+        /// When the groceries were last marked brought in. For home it also starts the cooldown,
+        /// and items checked off before it are already inside.
+        var lastUnloadDone: Date?
+        /// When the phone last really entered a saved grocery store.
+        var lastStoreVisit: Date?
+        /// Whose phone this is; on a shared list, other people's check-offs aren't in this car.
+        var userId: String?
+    }
+
     static func decision(
         for event: LocationEvent,
         preferences: UserPreferences,
         items: [GroceryItem],
         now: Date,
-        lastHandled: Date? = nil,
-        lastUnloadDone: Date? = nil,
-        userId: String? = nil
+        context: ReminderContext = ReminderContext()
     ) -> LocationEventDecision {
         guard event.transition == .enter else { return .ignore(reason: "left a place") }
         let elapsed = now.timeIntervalSince(event.date)
         guard elapsed <= maxEventAge else { return .ignore(reason: "the event is over an hour old") }
         let cooldownStart = event.kind == .home
-            ? [lastHandled, lastUnloadDone].compactMap { $0 }.max()
-            : lastHandled
+            ? [context.lastHandled, context.lastUnloadDone].compactMap { $0 }.max()
+            : context.lastHandled
         if !event.isSimulated, let lastHandled = cooldownStart {
             // Also covers an event older than the last handled time, e.g. queued before "All brought in".
             let sinceLast = event.date.timeIntervalSince(lastHandled)
@@ -209,7 +215,7 @@ final class AppState: ObservableObject {
         switch event.kind {
         case .home:
             guard let plan = carUnloadReminderPlan(
-                preferences: preferences, items: items, now: now, lastUnloadDone: lastUnloadDone, userId: userId
+                preferences: preferences, items: items, now: now, context: context
             ) else {
                 return .ignore(reason: "nothing bought recently and no unchecked items")
             }
@@ -251,9 +257,11 @@ final class AppState: ObservableObject {
                 preferences: preferences,
                 items: shoppingList,
                 now: now,
-                lastHandled: cooldowns.lastHandled[Self.cooldownKey(event.kind, event.placeId)],
-                lastUnloadDone: cooldowns.lastUnloadDone,
-                userId: currentUser?.id
+                context: ReminderContext(
+                    lastHandled: cooldowns.lastHandled[Self.cooldownKey(event.kind, event.placeId)],
+                    lastUnloadDone: cooldowns.lastUnloadDone,
+                    userId: currentUser?.id
+                )
             ))
         }
         pendingLocationEvents.removeAll()
@@ -344,18 +352,17 @@ final class AppState: ObservableObject {
 
     /// Counts what was just bought (and not yet brought in); with nothing bought recently, falls
     /// back to the unchecked items. Returns nil when there is nothing to unload.
-    /// - Parameter userId: only this user's check-offs count (items with no `completedBy` count too).
+    /// Only the context's user's check-offs count (items with no `completedBy` count too).
     static func carUnloadReminderPlan(
         preferences: UserPreferences,
         items: [GroceryItem],
         now: Date = Date(),
-        lastUnloadDone: Date? = nil,
-        userId: String? = nil
+        context: ReminderContext = ReminderContext()
     ) -> (itemCount: Int, repeats: Bool, repeatInterval: TimeInterval)? {
         let boughtCount = items.filter { item in
             let age = now.timeIntervalSince(item.updatedAt)
-            let alreadyInside = lastUnloadDone.map { item.updatedAt <= $0 } ?? false
-            let boughtBySomeoneElse = item.completedBy.map { $0 != userId } ?? false
+            let alreadyInside = context.lastUnloadDone.map { item.updatedAt <= $0 } ?? false
+            let boughtBySomeoneElse = item.completedBy.map { $0 != context.userId } ?? false
             return item.isCompleted && age >= 0 && age <= recentPurchaseWindow && !alreadyInside && !boughtBySomeoneElse
         }.count
         let itemCount = boughtCount > 0 ? boughtCount : items.filter { !$0.isCompleted }.count

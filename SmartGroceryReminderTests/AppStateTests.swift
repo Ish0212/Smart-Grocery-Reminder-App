@@ -115,7 +115,7 @@ final class AppStateTests: XCTestCase {
             GroceryItem(title: "Brought in", isCompleted: true, updatedAt: done.addingTimeInterval(-10 * 60)),
             GroceryItem(title: "Bought since", isCompleted: true, updatedAt: done.addingTimeInterval(10 * 60)),
         ]
-        let plan = try XCTUnwrap(AppState.carUnloadReminderPlan(preferences: .default, items: items, now: now, lastUnloadDone: done))
+        let plan = try XCTUnwrap(AppState.carUnloadReminderPlan(preferences: .default, items: items, now: now, context: .init(lastUnloadDone: done)))
         XCTAssertEqual(plan.itemCount, 1)
     }
 

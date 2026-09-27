@@ -222,10 +222,10 @@ final class AppStateSharedListTests: XCTestCase {
             GroceryItem(title: "Alice's", isCompleted: true, completedBy: "alice", updatedAt: now.addingTimeInterval(-10 * 60)),
             GroceryItem(title: "Before sharing", isCompleted: true, updatedAt: now.addingTimeInterval(-10 * 60)),
         ]
-        let plan = try XCTUnwrap(AppState.carUnloadReminderPlan(preferences: .default, items: items, now: now, userId: "bob"))
+        let plan = try XCTUnwrap(AppState.carUnloadReminderPlan(preferences: .default, items: items, now: now, context: .init(userId: "bob")))
         XCTAssertEqual(plan.itemCount, 2)
 
         let onlyAlices = [items[1]]
-        XCTAssertNil(AppState.carUnloadReminderPlan(preferences: .default, items: onlyAlices, now: now, userId: "bob"))
+        XCTAssertNil(AppState.carUnloadReminderPlan(preferences: .default, items: onlyAlices, now: now, context: .init(userId: "bob")))
     }
 }
