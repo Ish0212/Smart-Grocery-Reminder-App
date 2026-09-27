@@ -108,13 +108,15 @@ service cloud.firestore {
 
     function isValidItem(data, itemId) {
       return data.keys().hasOnly(['id', 'title', 'notes', 'aisle', 'isCompleted', 'completedBy', 'createdAt', 'updatedAt'])
-        && data.keys().hasAll(['id', 'title', 'isCompleted'])
+        && data.keys().hasAll(['id', 'title', 'isCompleted', 'createdAt', 'updatedAt'])
         && data.id == itemId
         && data.title is string && data.title.size() > 0 && data.title.size() <= 500
         && (!('notes' in data) || (data.notes is string && data.notes.size() <= 2000))
         && (!('aisle' in data) || (data.aisle is string && data.aisle.size() <= 200))
         && (!('completedBy' in data) || (data.completedBy is string && data.completedBy.size() <= 128))
-        && data.isCompleted is bool;
+        && data.isCompleted is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
     }
   }
 }

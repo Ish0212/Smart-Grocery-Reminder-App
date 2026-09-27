@@ -120,6 +120,12 @@ describe("item validation", () => {
     await assertFails(setDoc(doc(alice(), "users/alice/items/item-1"), item({ title: "x".repeat(501) })));
   });
 
+  test("rejects missing or non-timestamp dates", async () => {
+    const { createdAt, ...noCreatedAt } = item();
+    await assertFails(setDoc(doc(alice(), "users/alice/items/item-1"), noCreatedAt));
+    await assertFails(setDoc(doc(alice(), "users/alice/items/item-1"), item({ updatedAt: "yesterday" })));
+  });
+
   test("rejects an id that doesn't match the document", async () => {
     await assertFails(setDoc(doc(alice(), "users/alice/items/item-1"), item({ id: "item-2" })));
   });

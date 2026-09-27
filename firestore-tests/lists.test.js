@@ -120,6 +120,17 @@ describe("list items", () => {
     await assertFails(setDoc(doc(as("bob"), "lists/alice/items/item-2"), item({ id: "item-2", completedBy: 7 })));
   });
 
+  test("dates must be timestamps, and both are required", async () => {
+    const { createdAt, ...noCreatedAt } = item({ id: "item-2" });
+    const { updatedAt, ...noUpdatedAt } = item({ id: "item-2" });
+    await assertFails(setDoc(doc(as("bob"), "lists/alice/items/item-2"), noCreatedAt));
+    await assertFails(setDoc(doc(as("bob"), "lists/alice/items/item-2"), noUpdatedAt));
+    await assertFails(setDoc(doc(as("bob"), "lists/alice/items/item-2"), item({ id: "item-2", createdAt: "x".repeat(100_000) })));
+    await assertFails(setDoc(doc(as("bob"), "lists/alice/items/item-2"), item({ id: "item-2", updatedAt: { a: [1, 2, 3] } })));
+    await assertFails(updateDoc(doc(as("bob"), "lists/alice/items/item-1"), { updatedAt: 1_700_000_000 }));
+    await assertSucceeds(updateDoc(doc(as("bob"), "lists/alice/items/item-1"), { updatedAt: Timestamp.now() }));
+  });
+
   test("a list that doesn't exist has no members", async () => {
     await assertFails(getDocs(collection(as("carol"), "lists/nobody/items")));
   });
