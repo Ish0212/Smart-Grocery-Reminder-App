@@ -330,7 +330,11 @@ final class AppState: ObservableObject {
                 repeatInterval: repeatInterval,
                 scheduledAt: scheduledAt
             )
-            guard currentUser?.id == userId else { return }
+            // Signed out while iOS was adding it, after signOut had removed the reminders.
+            guard currentUser?.id == userId else {
+                if scheduled { notificationService.removeReminders(NotificationID.carUnloadReminders) }
+                return
+            }
             // Not counted and no cooldown, so the next arrival tries again.
             guard scheduled else {
                 diagnostics.record(.error, "Couldn't schedule the unload reminder: notifications not allowed?", placeKind: .home)
@@ -342,7 +346,10 @@ final class AppState: ObservableObject {
             recordUnloadScheduled(at: scheduledAt)
         case .notifyStore(let itemCount):
             let sent = await notificationService.sendGroceryStoreReminder(itemCount: itemCount)
-            guard currentUser?.id == userId else { return }
+            guard currentUser?.id == userId else {
+                if sent { notificationService.removeReminders([NotificationID.storeVisit]) }
+                return
+            }
             guard sent else {
                 diagnostics.record(.error, "Couldn't send the store reminder: notifications not allowed?", placeKind: .groceryStore)
                 return
@@ -488,6 +495,12 @@ final class AppState: ObservableObject {
         scheduledAt: Date? = nil
     ) async {
         guard category == NotificationCategory.carUnload else { return }
+        // A reminder left over from a signed-out account must not snooze, or start the next
+        // account's cooldown. After a cold launch the session may still be restoring: handle it then.
+        guard currentUser != nil || canRestoreSession else {
+            diagnostics.record(.skipped, "Ignored a reminder action: signed out", placeKind: .home)
+            return
+        }
         switch actionIdentifier {
         case UNNotificationDefaultActionIdentifier:
             // Tapping the reminder itself opens the tab with "Mark groceries brought in".
@@ -611,6 +624,8 @@ final class AppState: ObservableObject {
         preferences = .default
         locationService.stopMonitoring()
         homeArrivalTimer.cancel()
+        // The daily list, unload and store reminders belong to this account.
+        notificationService.removeAllReminders()
         cooldowns = ReminderCooldowns()
         cooldownStore?.remove()
         refreshUnloadOutstanding()

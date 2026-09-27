@@ -185,6 +185,57 @@ final class AppStateTests: XCTestCase {
     }
 
     @MainActor
+    func testSignOutRemovesEveryReminder() async throws {
+        let state = AppState.forTesting()
+        try await state.signUp(email: "reminders@example.com", password: "secret1", displayName: "R")
+        let service = state.notificationService
+        await service.scheduleHomeArrivalReminder(after: 600, itemCount: 1, repeats: true, repeatInterval: 300)
+        await service.sendGroceryStoreReminder(itemCount: 1)
+        XCTAssertGreaterThanOrEqual(service.pendingCount, 3)
+
+        state.signOut()
+
+        XCTAssertEqual(
+            Set(NotificationID.all),
+            [NotificationID.carUnload, NotificationID.carUnloadRepeat, NotificationID.storeVisit, NotificationID.dailyList]
+        )
+        XCTAssertEqual(Array(service.removedForTesting.suffix(4)), NotificationID.all)
+        XCTAssertEqual(Array(service.removedDeliveredForTesting.suffix(4)), NotificationID.all)
+        try await waitUntil { service.pendingCount == 0 }
+    }
+
+    /// A reminder left in Notification Center after sign-out must not snooze or write a cooldown.
+    @MainActor
+    func testReminderActionsAfterSignOutAreIgnored() async throws {
+        let state = AppState.forTesting()
+        try await state.signUp(email: "leftover@example.com", password: "secret1", displayName: "L")
+        state.signOut()
+
+        await state.handleNotificationAction(NotificationAction.markDone, category: NotificationCategory.carUnload)
+        await state.handleNotificationAction(NotificationAction.snooze, category: NotificationCategory.carUnload, itemCount: 2)
+        await state.handleNotificationAction(UNNotificationDefaultActionIdentifier, category: NotificationCategory.carUnload)
+
+        XCTAssertNil(state.lastUnloadDone)
+        XCTAssertNil(state.requestedTab)
+        XCTAssertFalse(state.notificationService.scheduledForTesting.contains { $0.identifier == NotificationID.carUnload })
+        let entries = state.diagnostics.entries
+        XCTAssertEqual(entries.filter { $0.kind == .skipped && $0.message == "Ignored a reminder action: signed out" }.count, 3)
+        XCTAssertFalse(entries.contains { $0.kind == .unloadDone || $0.kind == .snoozed })
+    }
+
+    /// "All brought in" can cold-launch the app before the saved session has been restored.
+    @MainActor
+    func testAllBroughtInBeforeTheSessionRestoresIsHandled() async {
+        let state = AppState.forTesting()
+        XCTAssertNil(state.currentUser)
+
+        await state.handleNotificationAction(NotificationAction.markDone, category: NotificationCategory.carUnload)
+
+        XCTAssertNotNil(state.lastUnloadDone)
+        XCTAssertEqual(state.diagnostics.entries.last?.kind, .unloadDone)
+    }
+
+    @MainActor
     func testSignOutClearsTheAccountsData() async {
         let state = AppState.forTesting()
         state.isAuthenticated = true

@@ -59,8 +59,8 @@ final class NotificationService: ObservableObject {
         repeatInterval: TimeInterval,
         scheduledAt: Date = Date()
     ) async -> Bool {
-        removePending([NotificationID.carUnload, NotificationID.carUnloadRepeat])
-        removeDelivered([NotificationID.carUnload, NotificationID.carUnloadRepeat])
+        removePending(NotificationID.carUnloadReminders)
+        removeDelivered(NotificationID.carUnloadReminders)
 
         let content = Self.carUnloadContent(
             itemCount: itemCount, isRepeat: false, repeatInterval: repeatInterval, scheduledAt: scheduledAt
@@ -161,8 +161,18 @@ final class NotificationService: ObservableObject {
     /// Removes the car-unload reminders, including any already in Notification Center, so none of
     /// them can be snoozed afterwards.
     func markCarUnloadComplete() {
-        removePending([NotificationID.carUnload, NotificationID.carUnloadRepeat])
-        removeDelivered([NotificationID.carUnload, NotificationID.carUnloadRepeat])
+        removeReminders(NotificationID.carUnloadReminders)
+    }
+
+    /// On sign-out: nothing scheduled for this account may fire (or be acted on) after it.
+    func removeAllReminders() {
+        removeReminders(NotificationID.all)
+    }
+
+    /// Removes these reminders, whether still pending or already in Notification Center.
+    func removeReminders(_ identifiers: [String]) {
+        removePending(identifiers)
+        removeDelivered(identifiers)
         Task { await refreshPendingCount() }
     }
 
@@ -240,6 +250,10 @@ enum NotificationID {
     static let carUnloadRepeat = "car-unload-repeat"
     static let storeVisit = "store-visit"
     static let dailyList = "daily-list"
+
+    static let carUnloadReminders = [carUnload, carUnloadRepeat]
+    /// Every notification the app schedules.
+    static let all = [carUnload, carUnloadRepeat, storeVisit, dailyList]
 }
 
 enum NotificationCategory {
