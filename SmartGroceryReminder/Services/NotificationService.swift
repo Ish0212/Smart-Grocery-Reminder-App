@@ -11,8 +11,10 @@ final class NotificationService: ObservableObject {
     private let center: UNUserNotificationCenter?
     /// Inert mode only: every request that would have been scheduled, in order.
     private(set) var scheduledForTesting: [UNNotificationRequest] = []
-    /// Inert mode only: every identifier that would have been removed, in order.
+    /// Inert mode only: every pending identifier that would have been removed, in order.
     private(set) var removedForTesting: [String] = []
+    /// Inert mode only: every delivered identifier that would have been removed from Notification Center, in order.
+    private(set) var removedDeliveredForTesting: [String] = []
     /// Inert mode only: the identifiers that would still be pending.
     private var pendingForTesting: Set<String> = []
     /// Inert mode only: refuse every request, as iOS does when it can't schedule one.
@@ -48,22 +50,29 @@ final class NotificationService: ObservableObject {
 
     /// Returns false if iOS refused the reminder; the repeat is only added after the first one.
     /// `repeatInterval` is also stored in the reminder for "Remind again", even when `repeats` is false.
+    /// Earlier car-unload reminders still in Notification Center are removed, so only this one can be acted on.
     @discardableResult
     func scheduleHomeArrivalReminder(
         after delay: TimeInterval,
         itemCount: Int,
         repeats: Bool,
-        repeatInterval: TimeInterval
+        repeatInterval: TimeInterval,
+        scheduledAt: Date = Date()
     ) async -> Bool {
         removePending([NotificationID.carUnload, NotificationID.carUnloadRepeat])
+        removeDelivered([NotificationID.carUnload, NotificationID.carUnloadRepeat])
 
-        let content = Self.carUnloadContent(itemCount: itemCount, isRepeat: false, repeatInterval: repeatInterval)
+        let content = Self.carUnloadContent(
+            itemCount: itemCount, isRepeat: false, repeatInterval: repeatInterval, scheduledAt: scheduledAt
+        )
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: max(delay, 5), repeats: false)
         let request = UNNotificationRequest(identifier: NotificationID.carUnload, content: content, trigger: trigger)
         let added = await add(request)
 
         if repeats, added {
-            let repeatContent = Self.carUnloadContent(itemCount: itemCount, isRepeat: true, repeatInterval: repeatInterval)
+            let repeatContent = Self.carUnloadContent(
+                itemCount: itemCount, isRepeat: true, repeatInterval: repeatInterval, scheduledAt: scheduledAt
+            )
             let repeatTrigger = UNTimeIntervalNotificationTrigger(timeInterval: max(delay + repeatInterval, 60), repeats: false)
             let repeatRequest = UNNotificationRequest(
                 identifier: NotificationID.carUnloadRepeat,
@@ -79,8 +88,14 @@ final class NotificationService: ObservableObject {
 
     /// The car-unload reminder. It carries the item count and the repeat interval so "Remind again"
     /// works even when the action cold-launches the app before the list and preferences have
-    /// loaded. A count of 0 (a store visit with nothing on the list) asks about "your groceries".
-    static func carUnloadContent(itemCount: Int, isRepeat: Bool, repeatInterval: TimeInterval) -> UNMutableNotificationContent {
+    /// loaded, and when it was scheduled, so "Remind again" after "All brought in" does nothing.
+    /// A count of 0 (a store visit with nothing on the list) asks about "your groceries".
+    static func carUnloadContent(
+        itemCount: Int,
+        isRepeat: Bool,
+        repeatInterval: TimeInterval,
+        scheduledAt: Date
+    ) -> UNMutableNotificationContent {
         let content = UNMutableNotificationContent()
         content.title = isRepeat ? "Still need to unload?" : "Groceries still in the car?"
         switch itemCount {
@@ -96,6 +111,7 @@ final class NotificationService: ObservableObject {
         content.userInfo = [
             NotificationUserInfo.itemCount: itemCount,
             NotificationUserInfo.repeatInterval: repeatInterval,
+            NotificationUserInfo.scheduledAt: scheduledAt.timeIntervalSince1970,
         ]
         return content
     }
@@ -142,8 +158,11 @@ final class NotificationService: ObservableObject {
         await refreshPendingCount()
     }
 
+    /// Removes the car-unload reminders, including any already in Notification Center, so none of
+    /// them can be snoozed afterwards.
     func markCarUnloadComplete() {
         removePending([NotificationID.carUnload, NotificationID.carUnloadRepeat])
+        removeDelivered([NotificationID.carUnload, NotificationID.carUnloadRepeat])
         Task { await refreshPendingCount() }
     }
 
@@ -206,6 +225,14 @@ final class NotificationService: ObservableObject {
         }
         center.removePendingNotificationRequests(withIdentifiers: identifiers)
     }
+
+    private func removeDelivered(_ identifiers: [String]) {
+        guard let center else {
+            removedDeliveredForTesting.append(contentsOf: identifiers)
+            return
+        }
+        center.removeDeliveredNotifications(withIdentifiers: identifiers)
+    }
 }
 
 enum NotificationID {
@@ -224,6 +251,8 @@ enum NotificationUserInfo {
     static let itemCount = "itemCount"
     /// Seconds until "Remind again" repeats the reminder.
     static let repeatInterval = "repeatInterval"
+    /// When the reminder was scheduled, as seconds since 1970.
+    static let scheduledAt = "scheduledAt"
 }
 
 enum NotificationAction {

@@ -72,12 +72,14 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
         let userInfo = response.notification.request.content.userInfo
         let itemCount = userInfo[NotificationUserInfo.itemCount] as? Int
         let repeatInterval = userInfo[NotificationUserInfo.repeatInterval] as? TimeInterval
+        let scheduledAt = (userInfo[NotificationUserInfo.scheduledAt] as? TimeInterval).map(Date.init(timeIntervalSince1970:))
         Task { @MainActor in
             await self.appState.handleNotificationAction(
                 action,
                 category: category,
                 itemCount: itemCount,
-                repeatInterval: repeatInterval
+                repeatInterval: repeatInterval,
+                scheduledAt: scheduledAt
             )
             completionHandler()
         }

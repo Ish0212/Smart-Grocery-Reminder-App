@@ -129,7 +129,7 @@ final class LocationEventTests: XCTestCase {
         ) else { return XCTFail("Expected scheduleUnload") }
         XCTAssertEqual(itemCount, 0)
 
-        let content = NotificationService.carUnloadContent(itemCount: 0, isRepeat: false, repeatInterval: 300)
+        let content = NotificationService.carUnloadContent(itemCount: 0, isRepeat: false, repeatInterval: 300, scheduledAt: now)
         XCTAssertEqual(content.body, "Don't forget to bring your groceries inside.")
         XCTAssertEqual(content.userInfo[NotificationUserInfo.itemCount] as? Int, 0)
     }
@@ -506,9 +506,27 @@ final class LocationEventTests: XCTestCase {
 
     // MARK: - Notification actions and timer
 
+    /// A launch with an unload reminder scheduled `minutesAgo` and saved on the device, as when
+    /// "Remind again" or "All brought in" cold-launches the app.
+    @MainActor
+    private func relaunch(
+        reminderScheduledMinutesAgo minutes: Double = 5,
+        broughtInMinutesAgo doneMinutes: Double? = nil
+    ) throws -> AppState {
+        let directory = temporaryFileURL("state").deletingLastPathComponent()
+        var cooldowns = AppState.ReminderCooldowns()
+        cooldowns.lastUnloadScheduled = Date().addingTimeInterval(-minutes * 60)
+        cooldowns.lastUnloadDone = doneMinutes.map { Date().addingTimeInterval(-$0 * 60) }
+        let store = JSONFileStore<AppState.ReminderCooldowns>(url: directory.appendingPathComponent("reminder-cooldowns.json"))
+        try store.save(cooldowns)
+        return AppState.forTesting(stateDirectory: directory)
+    }
+
     @MainActor
     func testSnoozeUsesTheCountFromTheNotification() async throws {
-        let state = AppState.forTesting()
+        let state = try relaunch()
+        XCTAssertTrue(state.unloadOutstanding)
+        let previous = try XCTUnwrap(state.lastUnloadScheduled)
         state.shoppingList = [GroceryItem(title: "Milk"), GroceryItem(title: "Eggs"), GroceryItem(title: "Bread")]
 
         await state.handleNotificationAction(NotificationAction.snooze, category: NotificationCategory.carUnload, itemCount: 2)
@@ -522,12 +540,16 @@ final class LocationEventTests: XCTestCase {
         let trigger = try XCTUnwrap(request.trigger as? UNTimeIntervalNotificationTrigger)
         XCTAssertEqual(trigger.timeInterval, state.preferences.carUnloadRepeatInterval)
         XCTAssertEqual(request.content.userInfo[NotificationUserInfo.repeatInterval] as? TimeInterval, state.preferences.carUnloadRepeatInterval)
+        // The new reminder is the outstanding one now.
+        let snoozedAt = try XCTUnwrap(state.lastUnloadScheduled)
+        XCTAssertGreaterThan(snoozedAt, previous)
+        XCTAssertEqual(request.content.userInfo[NotificationUserInfo.scheduledAt] as? TimeInterval, snoozedAt.timeIntervalSince1970)
     }
 
     /// On a cold launch the preferences haven't loaded, so the interval comes from the notification.
     @MainActor
     func testSnoozeUsesTheIntervalFromTheNotification() async throws {
-        let state = AppState.forTesting()
+        let state = try relaunch()
         XCTAssertNotEqual(state.preferences.carUnloadRepeatInterval, 120)
 
         await state.handleNotificationAction(
@@ -543,7 +565,7 @@ final class LocationEventTests: XCTestCase {
 
     @MainActor
     func testSnoozeKeepsAYourGroceriesReminder() async throws {
-        let state = AppState.forTesting()
+        let state = try relaunch()
 
         await state.handleNotificationAction(NotificationAction.snooze, category: NotificationCategory.carUnload, itemCount: 0)
 
@@ -554,11 +576,79 @@ final class LocationEventTests: XCTestCase {
     }
 
     @MainActor
-    func testSnoozeWithoutACountBeforeTheListLoadsIsSkipped() async {
-        let state = AppState.forTesting()
+    func testSnoozeWithoutACountBeforeTheListLoadsIsSkipped() async throws {
+        let state = try relaunch()
         await state.handleNotificationAction(NotificationAction.snooze, category: NotificationCategory.carUnload)
+        let last = try XCTUnwrap(state.diagnostics.entries.last)
+        XCTAssertEqual(last.kind, .skipped)
+        XCTAssertTrue(last.message.contains("no item count"), last.message)
+        XCTAssertTrue(state.notificationService.scheduledForTesting.isEmpty)
+    }
+
+    @MainActor
+    func testSnoozeAfterAllBroughtInIsIgnored() async throws {
+        let state = try relaunch(reminderScheduledMinutesAgo: 10)
+        let scheduledAt = try XCTUnwrap(state.lastUnloadScheduled)
+
+        await state.handleNotificationAction(NotificationAction.markDone, category: NotificationCategory.carUnload)
+        await state.handleNotificationAction(
+            NotificationAction.snooze, category: NotificationCategory.carUnload, itemCount: 2, scheduledAt: scheduledAt
+        )
+
+        let last = try XCTUnwrap(state.diagnostics.entries.last)
+        XCTAssertEqual(last.kind, .skipped)
+        XCTAssertTrue(last.message.contains("already brought in"), last.message)
+        XCTAssertTrue(state.notificationService.scheduledForTesting.isEmpty)
+    }
+
+    /// A newer reminder is outstanding, but this one is from before the last "All brought in".
+    @MainActor
+    func testSnoozeOnAReminderFromBeforeTheLastUnloadIsIgnored() async throws {
+        let state = try relaunch(reminderScheduledMinutesAgo: 2, broughtInMinutesAgo: 5)
+        XCTAssertTrue(state.unloadOutstanding)
+
+        await state.handleNotificationAction(
+            NotificationAction.snooze, category: NotificationCategory.carUnload, itemCount: 2,
+            scheduledAt: Date().addingTimeInterval(-20 * 60)
+        )
         XCTAssertEqual(state.diagnostics.entries.last?.kind, .skipped)
         XCTAssertTrue(state.notificationService.scheduledForTesting.isEmpty)
+
+        await state.handleNotificationAction(
+            NotificationAction.snooze, category: NotificationCategory.carUnload, itemCount: 2,
+            scheduledAt: state.lastUnloadScheduled
+        )
+        XCTAssertEqual(state.diagnostics.entries.last?.kind, .snoozed)
+    }
+
+    @MainActor
+    func testSnoozeOnAReminderFromHoursAgoIsIgnored() async throws {
+        let state = try relaunch(reminderScheduledMinutesAgo: 4 * 60)
+        XCTAssertFalse(state.unloadOutstanding)
+
+        await state.handleNotificationAction(
+            NotificationAction.snooze, category: NotificationCategory.carUnload, itemCount: 2,
+            scheduledAt: state.lastUnloadScheduled
+        )
+
+        let last = try XCTUnwrap(state.diagnostics.entries.last)
+        XCTAssertEqual(last.kind, .skipped)
+        XCTAssertTrue(last.message.contains("over 3 h old"), last.message)
+        XCTAssertTrue(state.notificationService.scheduledForTesting.isEmpty)
+    }
+
+    @MainActor
+    func testAllBroughtInFromAnOldReminderStillCounts() async throws {
+        let state = try relaunch(reminderScheduledMinutesAgo: 4 * 60)
+
+        await state.handleNotificationAction(NotificationAction.markDone, category: NotificationCategory.carUnload)
+
+        XCTAssertEqual(state.diagnostics.entries.last?.kind, .unloadDone)
+        XCTAssertNotNil(state.lastUnloadDone)
+        XCTAssertEqual(
+            Array(state.notificationService.removedDeliveredForTesting.suffix(2)),
+            [NotificationID.carUnload, NotificationID.carUnloadRepeat]
+        )
     }
 
     @MainActor
@@ -566,18 +656,26 @@ final class LocationEventTests: XCTestCase {
         let service = NotificationService(center: nil)
         XCTAssertTrue(service.isInert)
 
-        await service.scheduleHomeArrivalReminder(after: 600, itemCount: 3, repeats: true, repeatInterval: 300)
+        let scheduledAt = Date(timeIntervalSince1970: 1_700_000_000)
+        await service.scheduleHomeArrivalReminder(after: 600, itemCount: 3, repeats: true, repeatInterval: 300, scheduledAt: scheduledAt)
 
         XCTAssertEqual(service.scheduledForTesting.map(\.identifier), [NotificationID.carUnload, NotificationID.carUnloadRepeat])
         let first = try XCTUnwrap(service.scheduledForTesting.first)
         XCTAssertEqual(first.content.userInfo[NotificationUserInfo.itemCount] as? Int, 3)
         XCTAssertEqual(first.content.userInfo[NotificationUserInfo.repeatInterval] as? TimeInterval, 300)
+        XCTAssertEqual(first.content.userInfo[NotificationUserInfo.scheduledAt] as? TimeInterval, 1_700_000_000)
         XCTAssertEqual((first.trigger as? UNTimeIntervalNotificationTrigger)?.timeInterval, 600)
         XCTAssertEqual(service.pendingCount, 2)
+        // Older car-unload reminders still in Notification Center go before the new one is added.
+        XCTAssertEqual(service.removedDeliveredForTesting, [NotificationID.carUnload, NotificationID.carUnloadRepeat])
 
         service.markCarUnloadComplete()
 
         XCTAssertEqual(Array(service.removedForTesting.suffix(2)), [NotificationID.carUnload, NotificationID.carUnloadRepeat])
+        XCTAssertEqual(
+            service.removedDeliveredForTesting,
+            [NotificationID.carUnload, NotificationID.carUnloadRepeat, NotificationID.carUnload, NotificationID.carUnloadRepeat]
+        )
         try await waitUntil { service.pendingCount == 0 }
 
         // Never prompts.
@@ -711,10 +809,11 @@ final class LocationEventTests: XCTestCase {
     }
 
     @MainActor
-    func testUnloadNotificationCarriesTheItemCountAndRepeatInterval() {
-        let content = NotificationService.carUnloadContent(itemCount: 3, isRepeat: false, repeatInterval: 120)
+    func testUnloadNotificationCarriesItsCountIntervalAndTime() {
+        let content = NotificationService.carUnloadContent(itemCount: 3, isRepeat: false, repeatInterval: 120, scheduledAt: now)
         XCTAssertEqual(content.userInfo[NotificationUserInfo.itemCount] as? Int, 3)
         XCTAssertEqual(content.userInfo[NotificationUserInfo.repeatInterval] as? TimeInterval, 120)
+        XCTAssertEqual(content.userInfo[NotificationUserInfo.scheduledAt] as? TimeInterval, now.timeIntervalSince1970)
         XCTAssertEqual(content.categoryIdentifier, NotificationCategory.carUnload)
     }
 

@@ -322,11 +322,13 @@ final class AppState: ObservableObject {
         switch decision {
         case let .scheduleUnload(delay, itemCount, repeats, repeatInterval):
             homeArrivalTimer.start(duration: preferences.homeArrivalDelay, startedAt: event.date)
+            let scheduledAt = Date()
             let scheduled = await notificationService.scheduleHomeArrivalReminder(
                 after: delay,
                 itemCount: itemCount,
                 repeats: repeats,
-                repeatInterval: repeatInterval
+                repeatInterval: repeatInterval,
+                scheduledAt: scheduledAt
             )
             guard currentUser?.id == userId else { return }
             // Not counted and no cooldown, so the next arrival tries again.
@@ -337,7 +339,7 @@ final class AppState: ObservableObject {
             let what = itemCount == 0 ? "your groceries" : "\(itemCount) item(s)"
             diagnostics.record(.unloadScheduled, "Unload reminder in \(Self.describe(seconds: delay)) for \(what)", placeKind: .home)
             recordHandled(event.kind, event.placeId, at: event.date)
-            recordUnloadScheduled()
+            recordUnloadScheduled(at: scheduledAt)
         case .notifyStore(let itemCount):
             let sent = await notificationService.sendGroceryStoreReminder(itemCount: itemCount)
             guard currentUser?.id == userId else { return }
@@ -373,7 +375,7 @@ final class AppState: ObservableObject {
         try? cooldownStore?.save(cooldowns)
     }
 
-    private func recordUnloadScheduled(at date: Date = Date()) {
+    private func recordUnloadScheduled(at date: Date) {
         cooldowns.lastUnloadScheduled = date
         try? cooldownStore?.save(cooldowns)
         refreshUnloadOutstanding(now: date)
@@ -476,11 +478,14 @@ final class AppState: ObservableObject {
     /// - Parameters:
     ///   - itemCount: the count stored in the notification, preferred over counting `shoppingList`.
     ///   - repeatInterval: the interval stored in the notification, preferred over the preferences'.
+    ///   - scheduledAt: when the notification was scheduled; "Remind again" does nothing if the
+    ///     groceries were marked brought in since.
     func handleNotificationAction(
         _ actionIdentifier: String,
         category: String,
         itemCount: Int? = nil,
-        repeatInterval: TimeInterval? = nil
+        repeatInterval: TimeInterval? = nil,
+        scheduledAt: Date? = nil
     ) async {
         guard category == NotificationCategory.carUnload else { return }
         switch actionIdentifier {
@@ -488,8 +493,19 @@ final class AppState: ObservableObject {
             // Tapping the reminder itself opens the tab with "Mark groceries brought in".
             requestedTab = .arrival
         case NotificationAction.markDone:
+            // From any reminder, however old: the groceries are in now.
             markUnloadComplete(source: "notification")
         case NotificationAction.snooze:
+            if let scheduledAt, let done = lastUnloadDone, done >= scheduledAt {
+                diagnostics.record(.skipped, "Remind again: the groceries were already brought in", placeKind: .home)
+                return
+            }
+            // Also catches a reminder from hours ago still sitting in Notification Center.
+            refreshUnloadOutstanding()
+            guard unloadOutstanding else {
+                diagnostics.record(.skipped, "Remind again: nothing to unload (already brought in, or the reminder is over 3 h old)", placeKind: .home)
+                return
+            }
             // A count of 0 in the notification is a reminder about "your groceries"; it repeats as is.
             guard let openCount = itemCount ?? (itemsLoaded ? shoppingList.filter { !$0.isCompleted }.count : nil) else {
                 diagnostics.record(.skipped, "Remind again: no item count and the list hasn't loaded", placeKind: .home)
@@ -497,18 +513,20 @@ final class AppState: ObservableObject {
             }
             let stored = repeatInterval ?? 0
             let interval = stored > 0 ? stored : preferences.carUnloadRepeatInterval
+            let snoozedAt = Date()
             // Keeps the interval in the new reminder, so "Remind again" on it repeats the same way.
             let scheduled = await notificationService.scheduleHomeArrivalReminder(
                 after: interval,
                 itemCount: openCount,
                 repeats: false,
-                repeatInterval: interval
+                repeatInterval: interval,
+                scheduledAt: snoozedAt
             )
             guard scheduled else {
                 diagnostics.record(.error, "Couldn't schedule the reminder again: notifications not allowed?", placeKind: .home)
                 return
             }
-            recordUnloadScheduled()
+            recordUnloadScheduled(at: snoozedAt)
             diagnostics.record(.snoozed, "Remind again in \(Self.describe(seconds: interval))", placeKind: .home)
         default:
             break
