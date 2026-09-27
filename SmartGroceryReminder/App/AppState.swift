@@ -817,7 +817,8 @@ final class AppState: ObservableObject {
         shoppingList[index].completedBy = shoppingList[index].isCompleted ? currentUser?.id : nil
         shoppingList[index].updatedAt = Date()
         guard let listId = editableListId else { return }
-        try? await listService.upsert(item: shoppingList[index], listId: listId)
+        // An update, not an upsert: if someone else deleted the item meanwhile, it stays deleted.
+        try? await listService.update(item: shoppingList[index], listId: listId)
     }
 
     func deleteItems(at offsets: IndexSet) async {

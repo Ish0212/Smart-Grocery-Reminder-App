@@ -33,6 +33,8 @@ protocol ShoppingListServiceProtocol {
     /// Emits the list's items (from the local cache first when offline), then again on every change.
     func observeItems(listId: String) async -> AsyncThrowingStream<[GroceryItem], Error>
     func upsert(item: GroceryItem, listId: String) async throws
+    /// Changes an item only if it still exists, so an edit can't bring back one someone else deleted.
+    func update(item: GroceryItem, listId: String) async throws
     func delete(itemId: String, listId: String) async throws
     /// Emits the user's preferences once they are known, then again on every change.
     func observePreferences(userId: String) async -> AsyncThrowingStream<UserPreferences, Error>

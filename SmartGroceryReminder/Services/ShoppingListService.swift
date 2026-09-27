@@ -146,6 +146,14 @@ actor MockShoppingListService: ShoppingListServiceProtocol {
         publishItems(for: listId)
     }
 
+    func update(item: GroceryItem, listId: String) async throws {
+        // Like Firestore's updateData, a deleted item stays deleted.
+        guard let index = itemsByList[listId]?.firstIndex(where: { $0.id == item.id }) else { return }
+        itemsByList[listId]?[index] = item
+        persist()
+        publishItems(for: listId)
+    }
+
     func delete(itemId: String, listId: String) async throws {
         itemsByList[listId]?.removeAll { $0.id == itemId }
         persist()
@@ -352,6 +360,17 @@ final class FirestoreShoppingListService: ShoppingListServiceProtocol {
 
     func upsert(item: GroceryItem, listId: String) async throws {
         try itemsCollection(listId).document(item.id).setData(from: item)
+    }
+
+    /// `updateData` fails on a deleted document instead of creating it. Like `setData(from:)` it
+    /// doesn't wait for the server; a rejected update is rolled back in the local cache.
+    func update(item: GroceryItem, listId: String) async throws {
+        var fields = try Firestore.Encoder().encode(item)
+        // The encoder leaves out a nil completedBy, which would keep the stored one.
+        if item.completedBy == nil {
+            fields["completedBy"] = FieldValue.delete()
+        }
+        itemsCollection(listId).document(item.id).updateData(fields, completion: nil)
     }
 
     func delete(itemId: String, listId: String) async throws {

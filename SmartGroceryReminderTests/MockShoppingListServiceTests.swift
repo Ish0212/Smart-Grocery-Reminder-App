@@ -47,6 +47,31 @@ final class MockShoppingListServiceTests: XCTestCase {
         XCTAssertFalse(items.contains { $0.id == target.id })
     }
 
+    func testUpdateChangesAnItemInPlace() async throws {
+        let service = MockShoppingListService()
+        var item = SampleData.groceryItems[2]
+        item.isCompleted = true
+        try await service.update(item: item, listId: "demo-user")
+
+        let items = try await current(await service.observeItems(listId: "demo-user")) ?? []
+        XCTAssertEqual(items.count, SampleData.groceryItems.count)
+        XCTAssertEqual(items[2], item)
+    }
+
+    func testUpdatingADeletedItemDoesntBringItBack() async throws {
+        let service = MockShoppingListService()
+        var item = SampleData.groceryItems[0]
+        try await service.delete(itemId: item.id, listId: "demo-user")
+
+        // Someone else deleted it while this user was checking it off.
+        item.isCompleted = true
+        try await service.update(item: item, listId: "demo-user")
+
+        let items = try await current(await service.observeItems(listId: "demo-user")) ?? []
+        XCTAssertFalse(items.contains { $0.id == item.id })
+        XCTAssertEqual(items.count, SampleData.groceryItems.count - 1)
+    }
+
     func testObserverReceivesEveryChange() async throws {
         let service = MockShoppingListService()
         var updates = await service.observeItems(listId: "u1").makeAsyncIterator()
