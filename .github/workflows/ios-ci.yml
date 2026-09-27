@@ -23,7 +23,7 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Use the runner's default Xcode: it ships with simulator runtimes and devices preinstalled.
       - name: Show Xcode version
@@ -39,7 +39,7 @@ jobs:
       # project.yml pins Firebase exactly, so the key changes with the pin. Package.resolved can't key it:
       # it lives in the generated, gitignored .xcodeproj. Bump the v2 prefix to start from an empty cache.
       - name: Cache Swift packages
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .spm
           key: spm-v2-${{ runner.os }}-${{ hashFiles('project.yml') }}
@@ -123,7 +123,7 @@ jobs:
 
       - name: Upload result bundle
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: xcresult
           path: build/Results.xcresult
@@ -136,7 +136,7 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Device builds don't need simulator runtimes; the newest Xcode meets Firebase's 26.2+ minimum.
       - name: Select newest Xcode
@@ -151,7 +151,7 @@ jobs:
         run: xcodegen generate --spec project.yml
 
       - name: Cache Swift packages
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .spm
           key: spm-v2-${{ runner.os }}-${{ hashFiles('project.yml') }}
@@ -193,7 +193,7 @@ jobs:
           ls -lh build/SmartGroceryReminder-unsigned.ipa
 
       - name: Upload .ipa
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: SmartGroceryReminder-unsigned-ipa
           path: build/SmartGroceryReminder-unsigned.ipa
