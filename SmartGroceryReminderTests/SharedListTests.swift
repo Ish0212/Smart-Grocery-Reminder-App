@@ -134,6 +134,45 @@ final class MockSharedListTests: XCTestCase {
         XCTAssertEqual(info.memberIds, ["alice"])
     }
 
+    func testOnlyMembersCanReadAList() async throws {
+        let service = MockShoppingListService()
+        try await service.upsert(item: GroceryItem(title: "Milk"), listId: "alice")
+        let code = try await service.createInvite(userId: "alice")
+        try await service.joinList(code: code, userId: "bob")
+
+        let bobsView = try await first(await service.observeItems(listId: "alice", userId: "bob"))
+        XCTAssertEqual(bobsView?.map(\.title), ["Milk"])
+        do {
+            _ = try await first(await service.observeItems(listId: "alice", userId: "carol"))
+            XCTFail("Expected removedFromList")
+        } catch let error as SharedListError {
+            XCTAssertEqual(error, .removedFromList)
+        }
+    }
+
+    func testARemovedMemberIsCutOffAndCanStillLeave() async throws {
+        let service = MockShoppingListService()
+        let code = try await service.createInvite(userId: "alice")
+        try await service.joinList(code: code, userId: "bob")
+        var bobsItems = await service.observeItems(listId: "alice", userId: "bob").makeAsyncIterator()
+        _ = try await bobsItems.next()
+
+        await service.removeMember("bob", fromList: "alice")
+        do {
+            _ = try await bobsItems.next()
+            XCTFail("Expected removedFromList")
+        } catch let error as SharedListError {
+            XCTAssertEqual(error, .removedFromList)
+        }
+
+        // Leave still takes them home, though they're no longer on the list.
+        try await service.leaveList(userId: "bob")
+        let active = try await first(await service.observeActiveList(userId: "bob"))
+        XCTAssertEqual(active, "bob")
+        let info = try await service.listInfo(listId: "alice")
+        XCTAssertEqual(info.memberIds, ["alice"])
+    }
+
     func testYouCantLeaveYourOwnList() async throws {
         let service = MockShoppingListService()
         do {
@@ -220,6 +259,28 @@ final class AppStateSharedListTests: XCTestCase {
         try await state.listService.upsert(item: GroceryItem(title: "Still syncing"), listId: "bob")
         try await waitUntil { state.shoppingList.map(\.title) == ["Still syncing", "Bob's"] }
         XCTAssertEqual(state.activeListId, "bob")
+        state.signOut()
+    }
+
+    @MainActor
+    func testARemovedMemberIsSentBackToTheirOwnList() async throws {
+        let state = signedInState("bob")
+        try await state.listService.upsert(item: GroceryItem(title: "Bob's own"), listId: "bob")
+        try await state.listService.upsert(item: GroceryItem(title: "Alice's milk"), listId: "alice")
+        let code = try await state.listService.createInvite(userId: "alice")
+        try await state.joinList(code: code)
+        try await waitUntil { state.activeListId == "alice" && state.shoppingList.map(\.title) == ["Alice's milk"] }
+        XCTAssertNil(state.syncErrorMessage)
+
+        let service = try XCTUnwrap(state.listService as? MockShoppingListService)
+        await service.removeMember("bob", fromList: "alice")
+
+        try await waitUntil { state.activeListId == "bob" && state.shoppingList.map(\.title) == ["Bob's own"] }
+        XCTAssertEqual(state.syncErrorMessage, SharedListError.removedFromList.errorDescription)
+        let active = try await state.listService.observeActiveList(userId: "bob").first { _ in true }
+        XCTAssertEqual(active, "bob")
+        let info = try await state.listService.listInfo(listId: "alice")
+        XCTAssertEqual(info.memberIds, ["alice"])
         state.signOut()
     }
 

@@ -24,6 +24,13 @@ extension AppState {
     }
 }
 
+extension ShoppingListServiceProtocol {
+    /// A list's items as its owner sees them (a list's ID is its owner's uid).
+    func observeItems(listId: String) async -> AsyncThrowingStream<[GroceryItem], Error> {
+        await observeItems(listId: listId, userId: listId)
+    }
+}
+
 extension XCTestCase {
     /// A file URL inside a fresh temporary directory that is removed after the test.
     func temporaryFileURL(_ name: String = "store.json") -> URL {

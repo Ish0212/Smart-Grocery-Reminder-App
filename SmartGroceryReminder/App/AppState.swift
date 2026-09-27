@@ -47,6 +47,10 @@ final class AppState: ObservableObject {
     private var itemsSyncTask: Task<Void, Never>?
     private var activeListTask: Task<Void, Never>?
     private var preferencesSyncTask: Task<Void, Never>?
+    /// True while `switchList` waits on a join or leave. A join's new list can be denied for a moment
+    /// (the listener may reach the server before the membership does), which isn't a removal.
+    private var isSwitchingList = false
+    private var itemsDeniedDuringSwitch = false
     private let backgroundActivity: BackgroundActivityProviding
     private var backgroundActivityToken: Int?
     private var cooldowns: ReminderCooldowns
@@ -691,7 +695,7 @@ final class AppState: ObservableObject {
                 for try await listId in await listService.observeActiveList(userId: user.id) {
                     guard !Task.isCancelled, let self else { return }
                     if listId != self.activeListId || self.itemsSyncTask == nil {
-                        self.observeItems(of: listId)
+                        self.observeItems(of: listId, userId: user.id)
                     }
                 }
             } catch {
@@ -721,13 +725,13 @@ final class AppState: ObservableObject {
         processPendingLocationEvents()
     }
 
-    private func observeItems(of listId: String) {
+    private func observeItems(of listId: String, userId: String) {
         itemsSyncTask?.cancel()
         activeListId = listId
         sharedList = nil
         itemsSyncTask = Task { [weak self, listService] in
             do {
-                for try await items in await listService.observeItems(listId: listId) {
+                for try await items in await listService.observeItems(listId: listId, userId: userId) {
                     // A value buffered before sign-out or a list switch must not bring the old list back.
                     guard !Task.isCancelled, let self else { return }
                     self.shoppingList = items
@@ -735,11 +739,29 @@ final class AppState: ObservableObject {
                     self.processPendingLocationEvents()
                 }
             } catch {
-                guard !Task.isCancelled else { return }
-                self?.syncErrorMessage = "Couldn't sync your list: \(error.localizedDescription)"
+                guard !Task.isCancelled, let self else { return }
+                if error as? SharedListError == .removedFromList, listId != userId {
+                    await self.handleRemoval(from: listId, userId: userId)
+                } else {
+                    self.syncErrorMessage = "Couldn't sync your list: \(error.localizedDescription)"
+                }
             }
         }
         Task { await refreshSharedList() }
+    }
+
+    /// The owner removed this user from their list (or deleted it): the listener is denied, and
+    /// Leave is the way back, which works for a removed member too.
+    private func handleRemoval(from listId: String, userId: String) async {
+        guard currentUser?.id == userId, activeListId == listId else { return }
+        if isSwitchingList {
+            // Likely a join the server hasn't applied yet; `switchList` tries again once it has.
+            itemsSyncTask = nil
+            itemsDeniedDuringSwitch = true
+            return
+        }
+        syncErrorMessage = SharedListError.removedFromList.errorDescription
+        try? await listService.leaveList(userId: userId)
     }
 
     func refreshSharedList() async {
@@ -792,13 +814,19 @@ final class AppState: ObservableObject {
         let previous = activeListId
         itemsSyncTask?.cancel()
         itemsSyncTask = nil
+        isSwitchingList = true
+        itemsDeniedDuringSwitch = false
+        defer { isSwitchingList = false }
         do {
             try await change(listService, userId)
         } catch {
             if itemsSyncTask == nil, let previous {
-                observeItems(of: previous)
+                observeItems(of: previous, userId: userId)
             }
             throw error
+        }
+        if itemsDeniedDuringSwitch, itemsSyncTask == nil, currentUser?.id == userId, let listId = activeListId {
+            observeItems(of: listId, userId: userId)
         }
     }
 

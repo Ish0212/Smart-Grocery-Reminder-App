@@ -40,7 +40,7 @@ actor MockShoppingListService: ShoppingListServiceProtocol {
     private let now: @Sendable () -> Date
     /// False when a saved file exists but couldn't be read, so it is never overwritten.
     private let canSave: Bool
-    private var itemObservers: [(listId: String, continuation: AsyncThrowingStream<[GroceryItem], Error>.Continuation)] = []
+    private var itemObservers: [(listId: String, readerId: String, continuation: AsyncThrowingStream<[GroceryItem], Error>.Continuation)] = []
     private var preferenceObservers: [(userId: String, continuation: AsyncThrowingStream<UserPreferences, Error>.Continuation)] = []
     private var activeListObservers: [(userId: String, continuation: AsyncThrowingStream<String, Error>.Continuation)] = []
 
@@ -103,8 +103,27 @@ actor MockShoppingListService: ShoppingListServiceProtocol {
     func leaveList(userId: String) throws {
         let listId = activeListId(for: userId)
         guard listId != userId else { throw SharedListError.cannotLeaveOwnList }
+        // Does nothing for someone the owner already removed.
         lists[listId]?.memberIds.removeAll { $0 == userId }
         setActiveList(userId, for: userId)
+    }
+
+    /// The owner takes someone off their list (the rules allow it; the app has no button for it
+    /// yet). Like Firestore, that member's item listener is then denied.
+    func removeMember(_ userId: String, fromList listId: String) {
+        guard userId != listId else { return }
+        lists[listId]?.memberIds.removeAll { $0 == userId }
+        persist()
+        itemObservers.removeAll { observer in
+            guard observer.listId == listId, observer.readerId == userId else { return false }
+            observer.continuation.finish(throwing: SharedListError.removedFromList)
+            return true
+        }
+    }
+
+    /// Like the rules: the owner and the members may read a list.
+    private func canRead(_ listId: String, _ userId: String) -> Bool {
+        listId == userId || lists[listId]?.memberIds.contains(userId) == true
     }
 
     private func activeListId(for userId: String) -> String {
@@ -127,9 +146,13 @@ actor MockShoppingListService: ShoppingListServiceProtocol {
 
     // MARK: - Items
 
-    func observeItems(listId: String) -> AsyncThrowingStream<[GroceryItem], Error> {
+    func observeItems(listId: String, userId: String) -> AsyncThrowingStream<[GroceryItem], Error> {
         let (stream, continuation) = AsyncThrowingStream<[GroceryItem], Error>.makeStream(bufferingPolicy: .bufferingNewest(1))
-        itemObservers.append((listId, continuation))
+        guard canRead(listId, userId) else {
+            continuation.finish(throwing: SharedListError.removedFromList)
+            return stream
+        }
+        itemObservers.append((listId, userId, continuation))
         continuation.yield(itemsByList[listId] ?? [])
         return stream
     }
@@ -375,30 +398,35 @@ final class FirestoreShoppingListService: ShoppingListServiceProtocol {
         return memberIds.contains(userId)
     }
 
+    /// Switches back first, then leaves: someone the owner already removed can't take themselves off
+    /// the list (the rules deny it), and must still get back to their own list.
     func leaveList(userId: String) async throws {
         let userSnapshot = try await userDocument(userId).getDocument()
         let listId = userSnapshot.get("activeListId") as? String ?? userId
         guard listId != userId else { throw SharedListError.cannotLeaveOwnList }
-        let batch = db.batch()
-        batch.updateData(["memberIds": FieldValue.arrayRemove([userId])], forDocument: listDocument(listId))
         // Clearing the invite code means coming back takes a code again.
-        batch.setData(
-            ["activeListId": userId, "joinCode": FieldValue.delete()],
-            forDocument: userDocument(userId),
-            merge: true
-        )
-        try await batch.commit()
+        try await userDocument(userId).setData(["activeListId": userId, "joinCode": FieldValue.delete()], merge: true)
+        do {
+            try await listDocument(listId).updateData(["memberIds": FieldValue.arrayRemove([userId])])
+        } catch let error as FirestoreErrorCode where error.code == .permissionDenied || error.code == .notFound {
+            // Already removed, or the list is gone.
+        }
     }
 
     // MARK: - Items
 
-    func observeItems(listId: String) -> AsyncThrowingStream<[GroceryItem], Error> {
+    /// The rules decide who may read, so `userId` isn't needed here.
+    func observeItems(listId: String, userId: String) -> AsyncThrowingStream<[GroceryItem], Error> {
         // Newest first, matching the mock's insert-at-front order.
         let query = itemsCollection(listId).order(by: "createdAt", descending: true)
         return AsyncThrowingStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
             let registration = query.addSnapshotListener { snapshot, error in
                 if let error {
-                    continuation.finish(throwing: error)
+                    if let firestoreError = error as? FirestoreErrorCode, firestoreError.code == .permissionDenied {
+                        continuation.finish(throwing: SharedListError.removedFromList)
+                    } else {
+                        continuation.finish(throwing: error)
+                    }
                     return
                 }
                 guard let snapshot else { return }

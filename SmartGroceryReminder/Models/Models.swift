@@ -59,6 +59,8 @@ enum SharedListError: LocalizedError, Equatable {
     case listFull
     case cannotLeaveOwnList
     case notSignedIn
+    /// The owner removed this user, or the list is gone.
+    case removedFromList
 
     var errorDescription: String? {
         switch self {
@@ -67,6 +69,7 @@ enum SharedListError: LocalizedError, Equatable {
         case .listFull: return "That list already has \(SharedListInfo.maxMembers) people."
         case .cannotLeaveOwnList: return "This is your own list, so there's nothing to leave."
         case .notSignedIn: return "Sign in first."
+        case .removedFromList: return "You're no longer on that list."
         }
     }
 }
