@@ -22,6 +22,11 @@ final class AppState: ObservableObject {
     @Published private(set) var activeListId: String?
     /// Who shares the active list; nil until it has been fetched.
     @Published private(set) var sharedList: SharedListInfo?
+    /// An unload reminder was scheduled in the last 3 h and the groceries haven't been marked
+    /// brought in since, so "Mark groceries brought in" stays available after the countdown ends.
+    @Published private(set) var unloadOutstanding = false
+    /// A tab to show, e.g. Arrival after the unload reminder is tapped. MainTabView opens it and clears it.
+    @Published var requestedTab: AppTab?
 
     /// Location events wait here until the session's list and preferences have loaded.
     private(set) var pendingLocationEvents: [LocationEvent] = []
@@ -103,6 +108,7 @@ final class AppState: ObservableObject {
         self.shoppingList = []
         self.preferences = .default
 
+        refreshUnloadOutstanding()
         bindServices()
     }
 
@@ -116,23 +122,36 @@ final class AppState: ObservableObject {
 
         // Coalesced, so a sync burst or a background relaunch reloads the widget once.
         guard widgetStore != nil else { return }
-        Publishers.CombineLatest4($shoppingList, $isAuthenticated, $itemsLoaded, homeArrivalTimer.$endDate)
+        let unload = Publishers.CombineLatest(homeArrivalTimer.$endDate, $unloadOutstanding)
+        Publishers.CombineLatest4($shoppingList, $isAuthenticated, $itemsLoaded, unload)
             .debounce(for: .milliseconds(300), scheduler: DispatchQueue.main)
-            .sink { [weak self] items, isSignedIn, itemsLoaded, endDate in
+            .sink { [weak self] items, isSignedIn, itemsLoaded, unload in
                 // Until the list arrives it's empty; keep showing the last snapshot instead.
                 guard !isSignedIn || itemsLoaded else { return }
-                self?.updateWidget(Self.widgetSnapshot(items: items, isSignedIn: isSignedIn, unloadEndDate: endDate))
+                self?.updateWidget(Self.widgetSnapshot(
+                    items: items,
+                    isSignedIn: isSignedIn,
+                    unloadEndDate: unload.0,
+                    unloadOutstanding: unload.1
+                ))
             }
             .store(in: &cancellables)
     }
 
     // MARK: - Widget
 
-    static func widgetSnapshot(items: [GroceryItem], isSignedIn: Bool, unloadEndDate: Date?, now: Date = Date()) -> WidgetSnapshot {
+    static func widgetSnapshot(
+        items: [GroceryItem],
+        isSignedIn: Bool,
+        unloadEndDate: Date?,
+        unloadOutstanding: Bool = false,
+        now: Date = Date()
+    ) -> WidgetSnapshot {
         guard isSignedIn else { return .signedOut }
         return WidgetSnapshot(
             openTitles: items.filter { !$0.isCompleted }.map(\.title),
             unloadEndDate: unloadEndDate,
+            unloadOutstanding: unloadOutstanding,
             now: now
         )
     }
@@ -318,6 +337,7 @@ final class AppState: ObservableObject {
             let what = itemCount == 0 ? "your groceries" : "\(itemCount) item(s)"
             diagnostics.record(.unloadScheduled, "Unload reminder in \(Self.describe(seconds: delay)) for \(what)", placeKind: .home)
             recordHandled(event.kind, event.placeId, at: event.date)
+            recordUnloadScheduled()
         case .notifyStore(let itemCount):
             let sent = await notificationService.sendGroceryStoreReminder(itemCount: itemCount)
             guard currentUser?.id == userId else { return }
@@ -339,6 +359,8 @@ final class AppState: ObservableObject {
         var lastUnloadDone: Date?
         /// The last real enter into a saved grocery store, whether or not it sent a reminder.
         var lastStoreVisit: Date?
+        /// When an unload reminder (or "Remind again") was last scheduled.
+        var lastUnloadScheduled: Date?
     }
 
     static func cooldownKey(_ kind: GeoPlace.PlaceKind, _ placeId: String) -> String {
@@ -349,6 +371,12 @@ final class AppState: ObservableObject {
         let key = Self.cooldownKey(kind, placeId)
         cooldowns.lastHandled[key] = max(cooldowns.lastHandled[key] ?? date, date)
         try? cooldownStore?.save(cooldowns)
+    }
+
+    private func recordUnloadScheduled(at date: Date = Date()) {
+        cooldowns.lastUnloadScheduled = date
+        try? cooldownStore?.save(cooldowns)
+        refreshUnloadOutstanding(now: date)
     }
 
     /// A real store enter is evidence of a shopping trip even when it sends no reminder (inside the
@@ -456,6 +484,9 @@ final class AppState: ObservableObject {
     ) async {
         guard category == NotificationCategory.carUnload else { return }
         switch actionIdentifier {
+        case UNNotificationDefaultActionIdentifier:
+            // Tapping the reminder itself opens the tab with "Mark groceries brought in".
+            requestedTab = .arrival
         case NotificationAction.markDone:
             markUnloadComplete(source: "notification")
         case NotificationAction.snooze:
@@ -467,12 +498,17 @@ final class AppState: ObservableObject {
             let stored = repeatInterval ?? 0
             let interval = stored > 0 ? stored : preferences.carUnloadRepeatInterval
             // Keeps the interval in the new reminder, so "Remind again" on it repeats the same way.
-            await notificationService.scheduleHomeArrivalReminder(
+            let scheduled = await notificationService.scheduleHomeArrivalReminder(
                 after: interval,
                 itemCount: openCount,
                 repeats: false,
                 repeatInterval: interval
             )
+            guard scheduled else {
+                diagnostics.record(.error, "Couldn't schedule the reminder again: notifications not allowed?", placeKind: .home)
+                return
+            }
+            recordUnloadScheduled()
             diagnostics.record(.snoozed, "Remind again in \(Self.describe(seconds: interval))", placeKind: .home)
         default:
             break
@@ -488,6 +524,7 @@ final class AppState: ObservableObject {
         // real home ID) may not have loaded yet.
         cooldowns.lastUnloadDone = max(cooldowns.lastUnloadDone ?? now, now)
         try? cooldownStore?.save(cooldowns)
+        refreshUnloadOutstanding()
     }
 
     /// When the groceries were last marked brought in.
@@ -495,6 +532,27 @@ final class AppState: ObservableObject {
 
     /// When the phone last really entered a saved grocery store.
     var lastStoreVisit: Date? { cooldowns.lastStoreVisit }
+
+    /// When an unload reminder (or "Remind again") was last scheduled.
+    var lastUnloadScheduled: Date? { cooldowns.lastUnloadScheduled }
+
+    /// How long after it was scheduled an unload reminder still counts as outstanding.
+    static let outstandingUnloadWindow: TimeInterval = 3 * 60 * 60
+
+    /// A reminder was scheduled in the last 3 h and nothing was marked brought in since.
+    static func isUnloadOutstanding(scheduled: Date?, done: Date?, now: Date) -> Bool {
+        guard let scheduled else { return false }
+        let notDoneSince = done.map { $0 < scheduled } ?? true
+        return notDoneSince && now.timeIntervalSince(scheduled) <= outstandingUnloadWindow
+    }
+
+    /// Also called when the app becomes active, since the 3 h can run out while it's in the background.
+    func refreshUnloadOutstanding(now: Date = Date()) {
+        let outstanding = Self.isUnloadOutstanding(scheduled: cooldowns.lastUnloadScheduled, done: cooldowns.lastUnloadDone, now: now)
+        if outstanding != unloadOutstanding {
+            unloadOutstanding = outstanding
+        }
+    }
 
 
     // MARK: - Session
@@ -537,6 +595,8 @@ final class AppState: ObservableObject {
         homeArrivalTimer.cancel()
         cooldowns = ReminderCooldowns()
         cooldownStore?.remove()
+        refreshUnloadOutstanding()
+        requestedTab = nil
     }
 
     private func startSession(for user: AppUser) {

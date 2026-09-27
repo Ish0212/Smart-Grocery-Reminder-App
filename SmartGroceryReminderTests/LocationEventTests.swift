@@ -51,9 +51,10 @@ final class LocationEventTests: XCTestCase {
     private func loadedSession(
         preferences: UserPreferences? = nil,
         items: [GroceryItem] = [],
-        stateDirectory: URL? = nil
+        stateDirectory: URL? = nil,
+        widgetStore: WidgetSnapshotStore? = nil
     ) async throws -> AppState {
-        let state = AppState.forTesting(stateDirectory: stateDirectory)
+        let state = AppState.forTesting(stateDirectory: stateDirectory, widgetStore: widgetStore)
         let user = AppUser(id: "session-user", email: "s@b.c", displayName: "S")
         try await state.listService.savePreferences(preferences ?? sessionPreferences, userId: user.id)
         for item in items {
@@ -609,6 +610,9 @@ final class LocationEventTests: XCTestCase {
         try await waitUntil { state.diagnostics.entries.contains { $0.kind == .error && $0.placeKind == .home } }
         XCTAssertFalse(state.diagnostics.entries.contains { $0.kind == .unloadScheduled })
         XCTAssertTrue(state.notificationService.scheduledForTesting.isEmpty)
+        // Nothing will fire, so there is nothing to mark brought in.
+        XCTAssertNil(state.lastUnloadScheduled)
+        XCTAssertFalse(state.unloadOutstanding)
 
         // No cooldown was recorded, so the next arrival tries again instead of "already handled".
         state.notificationService.refusesRequestsForTesting = false
@@ -632,6 +636,67 @@ final class LocationEventTests: XCTestCase {
         try await waitUntil { state.diagnostics.entries.contains { $0.kind == .storeReminderSent } }
         XCTAssertFalse(state.diagnostics.entries.contains { $0.kind == .skipped })
         state.signOut()
+    }
+
+    // MARK: - Outstanding unload
+
+    @MainActor
+    func testAnUnloadIsOutstandingForThreeHoursUntilBroughtIn() {
+        let scheduled = now.addingTimeInterval(-20 * 60)
+        XCTAssertFalse(AppState.isUnloadOutstanding(scheduled: nil, done: nil, now: now))
+        XCTAssertTrue(AppState.isUnloadOutstanding(scheduled: scheduled, done: nil, now: now))
+        XCTAssertTrue(AppState.isUnloadOutstanding(scheduled: scheduled, done: scheduled.addingTimeInterval(-60), now: now))
+        XCTAssertFalse(AppState.isUnloadOutstanding(scheduled: scheduled, done: scheduled.addingTimeInterval(60), now: now))
+
+        let window = AppState.outstandingUnloadWindow
+        XCTAssertEqual(window, 3 * 60 * 60)
+        XCTAssertTrue(AppState.isUnloadOutstanding(scheduled: now.addingTimeInterval(-window), done: nil, now: now))
+        XCTAssertFalse(AppState.isUnloadOutstanding(scheduled: now.addingTimeInterval(-window - 1), done: nil, now: now))
+    }
+
+    /// The countdown ends when the reminder fires; "brought in" has to stay available after that.
+    @MainActor
+    func testAScheduledReminderStaysOutstandingUntilBroughtIn() async throws {
+        let directory = temporaryFileURL("state").deletingLastPathComponent()
+        let widget = WidgetSnapshotStore(url: temporaryFileURL("widget-snapshot.json"))
+        let state = try await loadedSession(
+            items: [GroceryItem(title: "Milk", isCompleted: true, completedBy: "session-user")],
+            stateDirectory: directory,
+            widgetStore: widget
+        )
+        XCTAssertFalse(state.unloadOutstanding)
+
+        state.handleLocationEvent(enter(home))
+        try await waitUntil { state.unloadOutstanding }
+        XCTAssertNotNil(state.lastUnloadScheduled)
+        try await waitUntil { widget.load()?.unloadOutstanding == true }
+
+        // The countdown ending (the reminder firing) doesn't end it, and a relaunch keeps it.
+        state.homeArrivalTimer.refresh(now: Date().addingTimeInterval(60 * 60))
+        XCTAssertFalse(state.homeArrivalTimer.isActive)
+        state.refreshUnloadOutstanding()
+        XCTAssertTrue(state.unloadOutstanding)
+        XCTAssertTrue(AppState.forTesting(stateDirectory: directory).unloadOutstanding)
+
+        state.markUnloadComplete(source: "app")
+        XCTAssertFalse(state.unloadOutstanding)
+        XCTAssertFalse(AppState.forTesting(stateDirectory: directory).unloadOutstanding)
+        try await waitUntil { widget.load()?.unloadOutstanding == false }
+        state.signOut()
+    }
+
+    @MainActor
+    func testTappingTheUnloadReminderOpensTheArrivalTab() async {
+        let state = AppState.forTesting()
+
+        await state.handleNotificationAction(UNNotificationDefaultActionIdentifier, category: NotificationCategory.storeVisit)
+        XCTAssertNil(state.requestedTab)
+
+        await state.handleNotificationAction(UNNotificationDefaultActionIdentifier, category: NotificationCategory.carUnload)
+        XCTAssertEqual(state.requestedTab, .arrival)
+
+        state.signOut()
+        XCTAssertNil(state.requestedTab)
     }
 
     @MainActor

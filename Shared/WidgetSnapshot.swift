@@ -1,7 +1,7 @@
 import Foundation
 
 /// What the home-screen widget shows. The app writes it into the App Group container whenever
-/// the list, sign-in or unload countdown changes; the widget only reads it.
+/// the list, sign-in, unload countdown or unload reminder changes; the widget only reads it.
 struct WidgetSnapshot: Codable, Equatable {
     /// How many item titles the widget has room for.
     static let maxTitles = 4
@@ -12,26 +12,45 @@ struct WidgetSnapshot: Codable, Equatable {
     var openTitles: [String]
     /// When the running unload countdown ends; nil when none is running.
     var unloadEndDate: Date?
+    /// The unload reminder was scheduled (it may have fired already) and the groceries haven't
+    /// been marked brought in.
+    var unloadOutstanding: Bool
 
     static let signedOut = WidgetSnapshot(isSignedIn: false, openCount: 0, openTitles: [], unloadEndDate: nil)
 
-    init(isSignedIn: Bool, openCount: Int, openTitles: [String], unloadEndDate: Date?) {
+    init(isSignedIn: Bool, openCount: Int, openTitles: [String], unloadEndDate: Date?, unloadOutstanding: Bool = false) {
         self.isSignedIn = isSignedIn
         self.openCount = openCount
         self.openTitles = openTitles
         self.unloadEndDate = unloadEndDate
+        self.unloadOutstanding = unloadOutstanding
     }
 
     /// - Parameters:
     ///   - openTitles: every unchecked item's title, in list order.
     ///   - unloadEndDate: the countdown's end; dropped if it has already passed.
-    init(openTitles: [String], unloadEndDate: Date?, now: Date = Date()) {
+    init(openTitles: [String], unloadEndDate: Date?, unloadOutstanding: Bool = false, now: Date = Date()) {
         self.init(
             isSignedIn: true,
             openCount: openTitles.count,
             openTitles: Array(openTitles.prefix(Self.maxTitles)),
-            unloadEndDate: unloadEndDate.flatMap { $0 > now ? $0 : nil }
+            unloadEndDate: unloadEndDate.flatMap { $0 > now ? $0 : nil },
+            unloadOutstanding: unloadOutstanding
         )
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case isSignedIn, openCount, openTitles, unloadEndDate, unloadOutstanding
+    }
+
+    /// A snapshot saved by an older version has no `unloadOutstanding`.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        isSignedIn = try container.decode(Bool.self, forKey: .isSignedIn)
+        openCount = try container.decode(Int.self, forKey: .openCount)
+        openTitles = try container.decode([String].self, forKey: .openTitles)
+        unloadEndDate = try container.decodeIfPresent(Date.self, forKey: .unloadEndDate)
+        unloadOutstanding = try container.decodeIfPresent(Bool.self, forKey: .unloadOutstanding) ?? false
     }
 
     func isCountingDown(at date: Date) -> Bool {

@@ -43,6 +43,20 @@ final class WidgetSnapshotTests: XCTestCase {
         XCTAssertEqual(store.load(), snapshot)
     }
 
+    func testOutstandingUnloadRoundTripsAndOlderSnapshotsStillDecode() throws {
+        let snapshot = WidgetSnapshot(openTitles: ["Milk"], unloadEndDate: nil, unloadOutstanding: true, now: now)
+        let decoded = try JSONDecoder().decode(WidgetSnapshot.self, from: JSONEncoder().encode(snapshot))
+        XCTAssertEqual(decoded, snapshot)
+        XCTAssertTrue(decoded.unloadOutstanding)
+
+        // Saved by a version without the field.
+        let older = Data(#"{"isSignedIn":true,"openCount":1,"openTitles":["Milk"]}"#.utf8)
+        let legacy = try JSONDecoder().decode(WidgetSnapshot.self, from: older)
+        XCTAssertFalse(legacy.unloadOutstanding)
+        XCTAssertEqual(legacy.openTitles, ["Milk"])
+        XCTAssertNil(legacy.unloadEndDate)
+    }
+
     func testStoreTreatsGarbageAsMissing() throws {
         let url = temporaryFileURL("widget-snapshot.json")
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -73,6 +87,14 @@ final class AppStateWidgetTests: XCTestCase {
         let snapshot = AppState.widgetSnapshot(items: items, isSignedIn: true, unloadEndDate: nil)
         XCTAssertEqual(snapshot.openTitles, ["Milk", "Bread"])
         XCTAssertEqual(snapshot.openCount, 2)
+    }
+
+    @MainActor
+    func testSnapshotCarriesTheOutstandingUnload() {
+        let items = [GroceryItem(title: "Milk")]
+        XCTAssertTrue(AppState.widgetSnapshot(items: items, isSignedIn: true, unloadEndDate: nil, unloadOutstanding: true).unloadOutstanding)
+        XCTAssertFalse(AppState.widgetSnapshot(items: items, isSignedIn: true, unloadEndDate: nil).unloadOutstanding)
+        XCTAssertFalse(AppState.widgetSnapshot(items: items, isSignedIn: false, unloadEndDate: nil, unloadOutstanding: true).unloadOutstanding)
     }
 
     @MainActor
