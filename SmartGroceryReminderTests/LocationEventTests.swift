@@ -785,6 +785,23 @@ final class LocationEventTests: XCTestCase {
         state.signOut()
     }
 
+    /// Handled after the delay has passed (e.g. a late relaunch): the countdown is already over and
+    /// the reminder fires in 5 s, but "brought in" is still offered.
+    @MainActor
+    func testALateArrivalStillOffersBroughtIn() async throws {
+        let state = try await loadedSession(items: [GroceryItem(title: "Milk", isCompleted: true, completedBy: "session-user")])
+        let arrival = Date().addingTimeInterval(-(state.preferences.homeArrivalDelay + 60))
+
+        state.handleLocationEvent(LocationEvent(kind: .home, transition: .enter, placeId: home.id, date: arrival))
+
+        try await waitUntil { state.unloadOutstanding }
+        XCTAssertFalse(state.homeArrivalTimer.isActive)
+        XCTAssertNil(state.homeArrivalTimer.endDate)
+        let reminder = try XCTUnwrap(state.notificationService.scheduledForTesting.first { $0.identifier == NotificationID.carUnload })
+        XCTAssertEqual((reminder.trigger as? UNTimeIntervalNotificationTrigger)?.timeInterval, 5)
+        state.signOut()
+    }
+
     @MainActor
     func testTappingTheUnloadReminderOpensTheArrivalTab() async {
         let state = AppState.forTesting()
