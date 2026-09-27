@@ -258,17 +258,69 @@ final class FirestoreShoppingListService: ShoppingListServiceProtocol {
 
     /// In one batch: create `lists/{uid}`, copy the legacy `users/{uid}/items` into it, and set
     /// `activeListId`. Because it's atomic, a missing `activeListId` means the list doesn't exist yet.
-    /// The legacy items are left in place.
+    /// The legacy items are left in place. They're read from the server, since a partial cache would
+    /// lose the rest, and each is cleaned up to pass the rules (see `migratableItem`): one item saved
+    /// before the rules checked it must not fail the whole batch, every launch.
     private func createOwnList(userId: String) async throws {
-        let legacy = try await userDocument(userId).collection("items").getDocuments()
+        let legacy = try await userDocument(userId).collection("items").getDocuments(source: .server)
+        let items = legacy.documents.compactMap { document in
+            Self.migratableItem(document.data(), documentID: document.documentID, userId: userId)
+                .map { (id: document.documentID, data: $0) }
+        }
         let batch = db.batch()
         batch.setData(["ownerId": userId, "memberIds": [userId]], forDocument: listDocument(userId))
         // A batch holds at most 500 writes; a personal grocery list is far below that.
-        for item in legacy.documents.prefix(490) {
-            batch.setData(item.data(), forDocument: itemsCollection(userId).document(item.documentID))
+        for item in items.prefix(490) {
+            batch.setData(item.data, forDocument: itemsCollection(userId).document(item.id))
         }
         batch.setData(["activeListId": userId], forDocument: userDocument(userId), merge: true)
         try await batch.commit()
+    }
+
+    /// A legacy item as the rules' `isValidItem` and `isHonestCompletedBy` accept it on create, or nil
+    /// if it can't be made to pass: unknown fields are dropped, over-long text is cut to the limit,
+    /// and a completedBy naming someone else is dropped. The rules measure text in UTF-16 units.
+    static func migratableItem(
+        _ data: [String: Any],
+        documentID: String,
+        userId: String,
+        isTimestamp: (Any) -> Bool = { $0 is Timestamp }
+    ) -> [String: Any]? {
+        guard data["id"] as? String == documentID,
+              let title = (data["title"] as? String).map({ trimmed($0, toUTF16: 500) }), !title.isEmpty,
+              let isCompleted = data["isCompleted"], CFGetTypeID(isCompleted as CFTypeRef) == CFBooleanGetTypeID(),
+              let createdAt = data["createdAt"], isTimestamp(createdAt),
+              let updatedAt = data["updatedAt"], isTimestamp(updatedAt) else { return nil }
+        var item: [String: Any] = [
+            "id": documentID,
+            "title": title,
+            "isCompleted": isCompleted,
+            "createdAt": createdAt,
+            "updatedAt": updatedAt,
+        ]
+        for (key, limit) in [("notes", 2000), ("aisle", 200)] {
+            guard let value = data[key] else { continue }
+            guard let text = value as? String else { return nil }
+            item[key] = trimmed(text, toUTF16: limit)
+        }
+        if data["completedBy"] as? String == userId {
+            item["completedBy"] = userId
+        }
+        return item
+    }
+
+    /// The longest run of whole Unicode scalars from the start that fits in `limit` UTF-16 units.
+    private static func trimmed(_ text: String, toUTF16 limit: Int) -> String {
+        guard text.utf16.count > limit else { return text }
+        var scalars = String.UnicodeScalarView()
+        var length = 0
+        for scalar in text.unicodeScalars {
+            let width = scalar.value > 0xFFFF ? 2 : 1
+            guard length + width <= limit else { break }
+            scalars.append(scalar)
+            length += width
+        }
+        return String(scalars)
     }
 
     func listInfo(listId: String) async throws -> SharedListInfo {

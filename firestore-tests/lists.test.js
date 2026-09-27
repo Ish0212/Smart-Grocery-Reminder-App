@@ -320,6 +320,31 @@ describe("legacy personal items", () => {
     await assertSucceeds(batch.commit());
   });
 
+  // What FirestoreShoppingListService.migratableItem makes of an item saved before the rules
+  // checked it: text cut to the limits in UTF-16 units (an emoji takes two), a foreign
+  // completedBy dropped. One item left as it was fails the whole batch.
+  test("the migration's cleaned-up items pass, and the raw legacy ones don't", async () => {
+    const trimmed = item({
+      id: "item-2",
+      title: "a" + "😀".repeat(249),
+      notes: "n".repeat(2000),
+      aisle: "é".repeat(200),
+      isCompleted: true,
+      completedBy: "alice",
+    });
+    const migrationBatch = (items) => {
+      const db = as("alice");
+      const batch = writeBatch(db);
+      batch.set(doc(db, "lists/alice"), { ownerId: "alice", memberIds: ["alice"] });
+      for (const data of items) batch.set(doc(db, `lists/alice/items/${data.id}`), data);
+      batch.set(doc(db, "users/alice"), { activeListId: "alice" }, { merge: true });
+      return batch.commit();
+    };
+    await assertFails(migrationBatch([item(), { ...trimmed, title: trimmed.title + "😀" }]));
+    await assertFails(migrationBatch([item(), { ...trimmed, completedBy: "bob" }]));
+    await assertSucceeds(migrationBatch([item(), trimmed]));
+  });
+
   test("nobody else can run a migration into your list", async () => {
     const db = as("bob");
     const batch = writeBatch(db);

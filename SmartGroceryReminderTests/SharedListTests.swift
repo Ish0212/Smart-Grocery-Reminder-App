@@ -255,3 +255,72 @@ final class AppStateSharedListTests: XCTestCase {
         XCTAssertNil(AppState.carUnloadReminderPlan(preferences: .default, items: onlyAlices, now: now, context: .init(userId: "bob")))
     }
 }
+
+/// The migration's clean-up of legacy `users/{uid}/items`, which must pass the rules on create.
+/// Dates stand in for Firestore timestamps.
+final class LegacyItemMigrationTests: XCTestCase {
+    private let date = Date(timeIntervalSince1970: 1_000_000)
+
+    private func legacy(_ overrides: [String: Any] = [:]) -> [String: Any] {
+        var data: [String: Any] = [
+            "id": "item-1",
+            "title": "Milk",
+            "notes": "",
+            "aisle": "Dairy",
+            "isCompleted": false,
+            "createdAt": date,
+            "updatedAt": date,
+        ]
+        data.merge(overrides) { $1 }
+        return data
+    }
+
+    private func migrated(_ data: [String: Any]) -> [String: Any]? {
+        FirestoreShoppingListService.migratableItem(data, documentID: "item-1", userId: "alice", isTimestamp: { $0 is Date })
+    }
+
+    func testAValidItemIsCopiedAsIs() throws {
+        let item = try XCTUnwrap(migrated(legacy(["completedBy": "alice", "isCompleted": true])))
+        XCTAssertEqual(Set(item.keys), ["id", "title", "notes", "aisle", "isCompleted", "completedBy", "createdAt", "updatedAt"])
+        XCTAssertEqual(item["title"] as? String, "Milk")
+        XCTAssertEqual(item["aisle"] as? String, "Dairy")
+        XCTAssertEqual(item["isCompleted"] as? Bool, true)
+        XCTAssertEqual(item["completedBy"] as? String, "alice")
+        XCTAssertEqual(item["createdAt"] as? Date, date)
+    }
+
+    func testOverlongTextIsCutToTheRulesLimits() throws {
+        // The rules count UTF-16 units: an emoji takes two, and is never cut in half.
+        let item = try XCTUnwrap(migrated(legacy([
+            "title": String(repeating: "😀", count: 300),
+            "notes": String(repeating: "n", count: 2500),
+            "aisle": "é" + String(repeating: "a", count: 300),
+        ])))
+        XCTAssertEqual(item["title"] as? String, String(repeating: "😀", count: 250))
+        XCTAssertEqual((item["notes"] as? String)?.utf16.count, 2000)
+        XCTAssertEqual((item["aisle"] as? String)?.utf16.count, 200)
+        XCTAssertEqual((item["aisle"] as? String)?.first, "é")
+        let odd = try XCTUnwrap(migrated(legacy(["title": "a" + String(repeating: "😀", count: 300)])))
+        XCTAssertEqual((odd["title"] as? String)?.utf16.count, 499)
+    }
+
+    func testUnknownFieldsAndSomeoneElsesCheckOffAreDropped() throws {
+        let item = try XCTUnwrap(migrated(legacy(["price": 3, "completedBy": "bob"])))
+        XCTAssertNil(item["price"])
+        XCTAssertNil(item["completedBy"])
+        let noOptionals = try XCTUnwrap(migrated(legacy().filter { !["notes", "aisle"].contains($0.key) }))
+        XCTAssertEqual(Set(noOptionals.keys), ["id", "title", "isCompleted", "createdAt", "updatedAt"])
+    }
+
+    func testItemsThatCantPassAreSkipped() {
+        XCTAssertNil(migrated(legacy(["id": "item-2"])))
+        XCTAssertNil(migrated(legacy().filter { $0.key != "id" }))
+        XCTAssertNil(migrated(legacy(["title": ""])))
+        XCTAssertNil(migrated(legacy().filter { $0.key != "title" }))
+        XCTAssertNil(migrated(legacy(["isCompleted": "yes"])))
+        XCTAssertNil(migrated(legacy(["isCompleted": 1])))
+        XCTAssertNil(migrated(legacy(["notes": 42])))
+        XCTAssertNil(migrated(legacy().filter { $0.key != "createdAt" }))
+        XCTAssertNil(migrated(legacy(["updatedAt": "yesterday"])))
+    }
+}
