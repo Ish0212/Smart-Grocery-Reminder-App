@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       device_ipa:
-        description: Build an unsigned .ipa for sideloading onto an iPhone (skips the tests)
+        description: Build an .ipa for sideloading onto an iPhone (ad-hoc signed, skips the tests)
         type: boolean
         default: false
 
@@ -115,7 +115,8 @@ jobs:
           path: build/Results.xcresult
 
   # Run from the Actions tab (or `gh workflow run ios-ci.yml --ref <branch> -f device_ipa=true`).
-  # The .ipa is unsigned; Sideloadly signs it with your Apple ID when installing (see README).
+  # The .ipa is only ad-hoc signed (to carry the entitlements); Sideloadly signs it with your Apple ID
+  # when installing (see README). The file and artifact keep their "unsigned" names so the docs' commands still work.
   device-ipa:
     if: ${{ inputs.device_ipa }}
     runs-on: macos-15
@@ -146,6 +147,25 @@ jobs:
         run: |
           set -o pipefail
           xcodebuild             -project SmartGroceryReminder.xcodeproj             -scheme SmartGroceryReminder             -configuration Release             -destination 'generic/platform=iOS'             -clonedSourcePackagesDirPath .spm             -derivedDataPath build/DerivedData             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""             build
+
+      # An unsigned build carries no entitlements, so the App Group would never be requested. Ad-hoc sign
+      # inside out (frameworks, widget, app) with each target's entitlements; Sideloadly keeps them when re-signing.
+      - name: Sign with the entitlements (ad hoc)
+        run: |
+          APP=build/DerivedData/Build/Products/Release-iphoneos/SmartGroceryReminder.app
+          WIDGET="$APP/PlugIns/SmartGroceryWidget.appex"
+          test -d "$WIDGET"
+          shopt -s nullglob
+          for FW in "$APP"/Frameworks/*.framework "$APP"/Frameworks/*.dylib; do
+            codesign --force --sign - "$FW"
+          done
+          codesign --force --sign - --entitlements SmartGroceryWidget/SmartGroceryWidget.entitlements "$WIDGET"
+          codesign --force --sign - --entitlements SmartGroceryReminder/SmartGroceryReminder.entitlements "$APP"
+          for BUNDLE in "$WIDGET" "$APP"; do
+            ENTITLEMENTS=$(codesign -d --entitlements - "$BUNDLE" 2>&1)
+            echo "$ENTITLEMENTS"
+            grep -q 'group.com.smartgrocery.reminder' <<< "$ENTITLEMENTS"
+          done
 
       - name: Package .ipa
         run: |
