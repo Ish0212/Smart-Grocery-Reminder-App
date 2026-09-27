@@ -38,11 +38,13 @@ final class LocationEventTests: XCTestCase {
     private let home = GeoPlace(id: "test-home", name: "Home", latitude: 40.7, longitude: -74.0, kind: .home)
     private let store = GeoPlace(id: "test-store", name: "Market", latitude: 40.71, longitude: -74.01, kind: .groceryStore)
 
-    /// Saved places with known ids, so real events for them are handled.
+    /// Saved places with known ids, so real events for them are handled. The daily reminder is
+    /// off, so the session doesn't schedule one next to the requests a test checks.
     private var sessionPreferences: UserPreferences {
         var prefs = UserPreferences.default
         prefs.homeLocation = home
         prefs.savedStores = [store]
+        prefs.dailyListReminderEnabled = false
         return prefs
     }
 
@@ -815,6 +817,59 @@ final class LocationEventTests: XCTestCase {
         XCTAssertEqual(content.userInfo[NotificationUserInfo.repeatInterval] as? TimeInterval, 120)
         XCTAssertEqual(content.userInfo[NotificationUserInfo.scheduledAt] as? TimeInterval, now.timeIntervalSince1970)
         XCTAssertEqual(content.categoryIdentifier, NotificationCategory.carUnload)
+    }
+
+    // MARK: - Daily reminder
+
+    private var dailyReminderOn: UserPreferences {
+        var prefs = sessionPreferences
+        prefs.dailyListReminderEnabled = true
+        return prefs
+    }
+
+    @MainActor
+    private func dailyReminders(_ state: AppState) -> [UNNotificationRequest] {
+        state.notificationService.scheduledForTesting.filter { $0.identifier == NotificationID.dailyList }
+    }
+
+    /// The count is in the reminder's text, so it follows the list without any settings change.
+    @MainActor
+    func testTheDailyReminderFollowsTheList() async throws {
+        let state = try await loadedSession(preferences: dailyReminderOn, items: [GroceryItem(title: "Milk")])
+
+        // Scheduled once the session has loaded, with nothing saved.
+        try await waitUntil(timeout: 5) { self.dailyReminders(state).last?.content.body == "1 item still on your list." }
+
+        await state.addItem("Bread")
+        try await waitUntil(timeout: 5) { self.dailyReminders(state).last?.content.body == "2 items still on your list." }
+
+        // Debounced: checking off both reschedules it once.
+        let before = dailyReminders(state).count
+        for item in state.shoppingList {
+            await state.toggleItem(item)
+        }
+        try await waitUntil(timeout: 5) {
+            self.dailyReminders(state).last?.content.body == "Your list is clear — add anything you need for tomorrow."
+        }
+        XCTAssertEqual(dailyReminders(state).count, before + 1)
+        state.signOut()
+    }
+
+    @MainActor
+    func testTheDailyReminderFollowsItsSettings() async throws {
+        let state = try await loadedSession(preferences: dailyReminderOn, items: [GroceryItem(title: "Milk")])
+        try await waitUntil(timeout: 5) { !self.dailyReminders(state).isEmpty }
+
+        state.preferences.reminderHour = 8
+        try await waitUntil(timeout: 5) {
+            (self.dailyReminders(state).last?.trigger as? UNCalendarNotificationTrigger)?.dateComponents.hour == 8
+        }
+
+        let scheduled = dailyReminders(state).count
+        state.preferences.dailyListReminderEnabled = false
+        try await waitUntil(timeout: 5) { state.notificationService.pendingCount == 0 }
+        XCTAssertEqual(dailyReminders(state).count, scheduled)
+        state.signOut()
     }
 
     @MainActor

@@ -120,6 +120,20 @@ final class AppState: ObservableObject {
             }
             .store(in: &cancellables)
 
+        // The daily reminder has the open-item count in its text, so it's rescheduled a second after
+        // the list or the preferences last change (a run of check-offs reschedules it once), and
+        // when notifications become allowed. It reads the state then, once the loaded flags have settled.
+        Publishers.Merge3(
+            $shoppingList.map { _ in () },
+            $preferences.map { _ in () },
+            notificationService.$isAuthorized.removeDuplicates().map { _ in () }
+        )
+        .debounce(for: .seconds(1), scheduler: DispatchQueue.main)
+        .sink { [weak self] _ in
+            Task { await self?.updateDailyReminder() }
+        }
+        .store(in: &cancellables)
+
         // Coalesced, so a sync burst or a background relaunch reloads the widget once.
         guard widgetStore != nil else { return }
         let unload = Publishers.CombineLatest(homeArrivalTimer.$endDate, $unloadOutstanding)
@@ -161,6 +175,19 @@ final class AppState: ObservableObject {
         lastWidgetSnapshot = snapshot
         try? widgetStore.save(snapshot)
         WidgetCenter.shared.reloadTimelines(ofKind: WidgetKind.groceries)
+    }
+
+    // MARK: - Daily reminder
+
+    /// Reschedules the daily reminder with the current count and settings, once the session's list
+    /// and preferences have both loaded (before that the count would be wrong).
+    private func updateDailyReminder() async {
+        guard sessionDataLoaded, let userId = currentUser?.id else { return }
+        await notificationService.rescheduleRepeatingReminders(preferences: preferences, items: shoppingList)
+        // Signed out while iOS was adding it, after signOut had removed the reminders.
+        if currentUser?.id != userId {
+            notificationService.removeReminders([NotificationID.dailyList])
+        }
     }
 
     // MARK: - Location events
@@ -847,10 +874,10 @@ final class AppState: ObservableObject {
         await savePreferences()
     }
 
+    /// The daily reminder follows the preferences on its own (see `bindServices`).
     func savePreferences() async {
         guard preferencesLoaded, let userId = currentUser?.id else { return }
         try? await listService.savePreferences(preferences, userId: userId)
         locationService.startMonitoring(home: preferences.homeLocation, stores: preferences.savedStores)
-        await notificationService.rescheduleRepeatingReminders(preferences: preferences, items: shoppingList)
     }
 }
