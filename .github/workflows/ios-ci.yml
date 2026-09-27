@@ -7,13 +7,15 @@ on:
   workflow_dispatch:
     inputs:
       device_ipa:
-        description: Build an unsigned .ipa for sideloading onto an iPhone (skips the tests)
+        description: Build an .ipa for sideloading onto an iPhone (ad-hoc signed, skips the tests)
         type: boolean
         default: false
 
+# A device build must not cancel the test run for the same commit, and main's test runs are never
+# cancelled; only a newer push to a pull request replaces the older run.
 concurrency:
-  group: ios-ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}-${{ inputs.device_ipa || false }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build-and-test:
@@ -21,7 +23,7 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Use the runner's default Xcode: it ships with simulator runtimes and devices preinstalled.
       - name: Show Xcode version
@@ -34,12 +36,14 @@ jobs:
         run: xcodegen generate --spec project.yml
 
       # Firebase and its dependencies are large; keep the resolved package checkouts between runs.
+      # project.yml pins Firebase exactly, so the key changes with the pin. Package.resolved can't key it:
+      # it lives in the generated, gitignored .xcodeproj. Bump the v2 prefix to start from an empty cache.
       - name: Cache Swift packages
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .spm
-          key: spm-${{ runner.os }}-${{ hashFiles('project.yml') }}
-          restore-keys: spm-${{ runner.os }}-
+          key: spm-v2-${{ runner.os }}-${{ hashFiles('project.yml') }}
+          restore-keys: spm-v2-${{ runner.os }}-
 
       - name: Pick an eligible iPhone simulator
         id: sim
@@ -98,21 +102,41 @@ jobs:
       - name: Check the widget is embedded
         run: plutil -lint build/DerivedData/Build/Products/Debug-iphonesimulator/SmartGroceryReminder.app/PlugIns/SmartGroceryWidget.appex/Info.plist
 
+      # The asset catalog compiler adds CFBundleIcons only when it built the AppIcon set; App Store Connect rejects an app without an icon.
+      - name: Check the app icon is compiled
+        run: |
+          ICON=$(plutil -extract CFBundleIcons.CFBundlePrimaryIcon.CFBundleIconName raw -o - build/DerivedData/Build/Products/Debug-iphonesimulator/SmartGroceryReminder.app/Info.plist)
+          echo "App icon: $ICON"
+          test "$ICON" = AppIcon
+
+      # Both Info.plists read MARKETING_VERSION / CURRENT_PROJECT_VERSION from project.yml; they must be set and equal.
+      - name: Check the app and widget versions match
+        run: |
+          APP=build/DerivedData/Build/Products/Debug-iphonesimulator/SmartGroceryReminder.app
+          for KEY in CFBundleShortVersionString CFBundleVersion; do
+            A=$(plutil -extract $KEY raw -o - "$APP/Info.plist")
+            W=$(plutil -extract $KEY raw -o - "$APP/PlugIns/SmartGroceryWidget.appex/Info.plist")
+            echo "$KEY: app $A, widget $W"
+            grep -Eq '^[0-9]+(\.[0-9]+)*$' <<< "$A"
+            test "$A" = "$W"
+          done
+
       - name: Upload result bundle
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: xcresult
           path: build/Results.xcresult
 
   # Run from the Actions tab (or `gh workflow run ios-ci.yml --ref <branch> -f device_ipa=true`).
-  # The .ipa is unsigned; Sideloadly signs it with your Apple ID when installing (see README).
+  # The .ipa is only ad-hoc signed (to carry the entitlements); Sideloadly signs it with your Apple ID
+  # when installing (see README). The file and artifact keep their "unsigned" names so the docs' commands still work.
   device-ipa:
     if: ${{ inputs.device_ipa }}
     runs-on: macos-15
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Device builds don't need simulator runtimes; the newest Xcode meets Firebase's 26.2+ minimum.
       - name: Select newest Xcode
@@ -127,16 +151,35 @@ jobs:
         run: xcodegen generate --spec project.yml
 
       - name: Cache Swift packages
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .spm
-          key: spm-${{ runner.os }}-${{ hashFiles('project.yml') }}
-          restore-keys: spm-${{ runner.os }}-
+          key: spm-v2-${{ runner.os }}-${{ hashFiles('project.yml') }}
+          restore-keys: spm-v2-${{ runner.os }}-
 
       - name: Build for iPhone (unsigned)
         run: |
           set -o pipefail
           xcodebuild             -project SmartGroceryReminder.xcodeproj             -scheme SmartGroceryReminder             -configuration Release             -destination 'generic/platform=iOS'             -clonedSourcePackagesDirPath .spm             -derivedDataPath build/DerivedData             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""             build
+
+      # An unsigned build carries no entitlements, so the App Group would never be requested. Ad-hoc sign
+      # inside out (frameworks, widget, app) with each target's entitlements; Sideloadly keeps them when re-signing.
+      - name: Sign with the entitlements (ad hoc)
+        run: |
+          APP=build/DerivedData/Build/Products/Release-iphoneos/SmartGroceryReminder.app
+          WIDGET="$APP/PlugIns/SmartGroceryWidget.appex"
+          test -d "$WIDGET"
+          shopt -s nullglob
+          for FW in "$APP"/Frameworks/*.framework "$APP"/Frameworks/*.dylib; do
+            codesign --force --sign - "$FW"
+          done
+          codesign --force --sign - --entitlements SmartGroceryWidget/SmartGroceryWidget.entitlements "$WIDGET"
+          codesign --force --sign - --entitlements SmartGroceryReminder/SmartGroceryReminder.entitlements "$APP"
+          for BUNDLE in "$WIDGET" "$APP"; do
+            ENTITLEMENTS=$(codesign -d --entitlements - "$BUNDLE" 2>&1)
+            echo "$ENTITLEMENTS"
+            grep -q 'group.com.smartgrocery.reminder' <<< "$ENTITLEMENTS"
+          done
 
       - name: Package .ipa
         run: |
@@ -150,7 +193,7 @@ jobs:
           ls -lh build/SmartGroceryReminder-unsigned.ipa
 
       - name: Upload .ipa
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: SmartGroceryReminder-unsigned-ipa
           path: build/SmartGroceryReminder-unsigned.ipa
