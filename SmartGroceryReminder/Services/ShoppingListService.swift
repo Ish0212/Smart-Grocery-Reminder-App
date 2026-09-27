@@ -86,8 +86,9 @@ actor MockShoppingListService: ShoppingListServiceProtocol {
         return code
     }
 
-    func joinList(code: String, userId: String) throws {
-        guard let invite = invites[InviteCode.normalize(code)], var list = lists[invite.listId] else {
+    func joinList(code rawCode: String, userId: String) throws {
+        let code = InviteCode.normalize(rawCode)
+        guard code.count == InviteCode.length, let invite = invites[code], var list = lists[invite.listId] else {
             throw SharedListError.invalidCode
         }
         guard invite.expiresAt > now() else { throw SharedListError.expiredCode }
@@ -281,7 +282,7 @@ final class FirestoreShoppingListService: ShoppingListServiceProtocol {
 
     func joinList(code rawCode: String, userId: String) async throws {
         let code = InviteCode.normalize(rawCode)
-        guard !code.isEmpty else { throw SharedListError.invalidCode }
+        guard code.count == InviteCode.length else { throw SharedListError.invalidCode }
         let invite = try await db.collection("invites").document(code).getDocument()
         guard let listId = invite.get("listId") as? String,
               let expiresAt = invite.get("expiresAt") as? Timestamp else { throw SharedListError.invalidCode }

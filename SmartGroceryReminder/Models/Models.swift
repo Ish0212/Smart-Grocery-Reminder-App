@@ -81,9 +81,10 @@ enum InviteCode {
         String((0..<length).map { _ in alphabet.randomElement()! })
     }
 
-    /// Uppercases and drops spaces and dashes, so "abcd-2345" and "ABCD 2345" both work.
+    /// Uppercases and keeps only the alphabet's characters, so "abcd-2345" and "ABCD 2345" both work,
+    /// and nothing else reaches a lookup (a "/" would make the code a Firestore path and crash).
     static func normalize(_ code: String) -> String {
-        code.uppercased().filter { !$0.isWhitespace && $0 != "-" }
+        code.uppercased().filter { alphabet.contains($0) }
     }
 }
 

@@ -20,6 +20,13 @@ final class InviteCodeTests: XCTestCase {
         XCTAssertEqual(InviteCode.normalize("abcd-2345"), "ABCD2345")
         XCTAssertEqual(InviteCode.normalize(" ABCD 2345 "), "ABCD2345")
     }
+
+    func testNormalizeKeepsOnlyTheAlphabet() {
+        // A "/" would turn the code into a Firestore path.
+        XCTAssertEqual(InviteCode.normalize("abc/2345"), "ABC2345")
+        XCTAssertEqual(InviteCode.normalize("AB/CD.23\n45"), "ABCD2345")
+        XCTAssertEqual(InviteCode.normalize("01OIL"), "")
+    }
 }
 
 final class MockSharedListTests: XCTestCase {
@@ -74,6 +81,25 @@ final class MockSharedListTests: XCTestCase {
         } catch let error as SharedListError {
             XCTAssertEqual(error, .expiredCode)
         }
+    }
+
+    func testCodesOfTheWrongLengthFail() async throws {
+        let service = MockShoppingListService()
+        let code = try await service.createInvite(userId: "alice")
+
+        for wrong in [String(code.dropLast()), code + "A", "ABC/2345", "/"] {
+            do {
+                try await service.joinList(code: wrong, userId: "bob")
+                XCTFail("Expected invalidCode for \(wrong)")
+            } catch let error as SharedListError {
+                XCTAssertEqual(error, .invalidCode, wrong)
+            }
+        }
+
+        // Characters outside the alphabet are dropped, so a stray separator still works.
+        try await service.joinList(code: "\(code.prefix(4))/\(code.suffix(4))", userId: "bob")
+        let info = try await service.listInfo(listId: "alice")
+        XCTAssertEqual(info.memberIds, ["alice", "bob"])
     }
 
     func testListsAreCapped() async throws {
