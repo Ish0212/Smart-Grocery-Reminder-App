@@ -36,12 +36,14 @@ jobs:
         run: xcodegen generate --spec project.yml
 
       # Firebase and its dependencies are large; keep the resolved package checkouts between runs.
+      # project.yml pins Firebase exactly, so the key changes with the pin. Package.resolved can't key it:
+      # it lives in the generated, gitignored .xcodeproj. Bump the v2 prefix to start from an empty cache.
       - name: Cache Swift packages
         uses: actions/cache@v4
         with:
           path: .spm
-          key: spm-${{ runner.os }}-${{ hashFiles('project.yml') }}
-          restore-keys: spm-${{ runner.os }}-
+          key: spm-v2-${{ runner.os }}-${{ hashFiles('project.yml') }}
+          restore-keys: spm-v2-${{ runner.os }}-
 
       - name: Pick an eligible iPhone simulator
         id: sim
@@ -152,8 +154,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .spm
-          key: spm-${{ runner.os }}-${{ hashFiles('project.yml') }}
-          restore-keys: spm-${{ runner.os }}-
+          key: spm-v2-${{ runner.os }}-${{ hashFiles('project.yml') }}
+          restore-keys: spm-v2-${{ runner.os }}-
 
       - name: Build for iPhone (unsigned)
         run: |
