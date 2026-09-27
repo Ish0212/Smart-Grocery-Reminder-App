@@ -47,6 +47,7 @@ final class NotificationService: ObservableObject {
     }
 
     /// Returns false if iOS refused the reminder; the repeat is only added after the first one.
+    /// `repeatInterval` is also stored in the reminder for "Remind again", even when `repeats` is false.
     @discardableResult
     func scheduleHomeArrivalReminder(
         after delay: TimeInterval,
@@ -56,13 +57,13 @@ final class NotificationService: ObservableObject {
     ) async -> Bool {
         removePending([NotificationID.carUnload, NotificationID.carUnloadRepeat])
 
-        let content = Self.carUnloadContent(itemCount: itemCount, isRepeat: false)
+        let content = Self.carUnloadContent(itemCount: itemCount, isRepeat: false, repeatInterval: repeatInterval)
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: max(delay, 5), repeats: false)
         let request = UNNotificationRequest(identifier: NotificationID.carUnload, content: content, trigger: trigger)
         let added = await add(request)
 
         if repeats, added {
-            let repeatContent = Self.carUnloadContent(itemCount: itemCount, isRepeat: true)
+            let repeatContent = Self.carUnloadContent(itemCount: itemCount, isRepeat: true, repeatInterval: repeatInterval)
             let repeatTrigger = UNTimeIntervalNotificationTrigger(timeInterval: max(delay + repeatInterval, 60), repeats: false)
             let repeatRequest = UNNotificationRequest(
                 identifier: NotificationID.carUnloadRepeat,
@@ -76,10 +77,10 @@ final class NotificationService: ObservableObject {
         return added
     }
 
-    /// The car-unload reminder. It carries the item count so "Remind again" works even when the
-    /// action cold-launches the app before the list has loaded. A count of 0 (a store visit with
-    /// nothing on the list) asks about "your groceries".
-    static func carUnloadContent(itemCount: Int, isRepeat: Bool) -> UNMutableNotificationContent {
+    /// The car-unload reminder. It carries the item count and the repeat interval so "Remind again"
+    /// works even when the action cold-launches the app before the list and preferences have
+    /// loaded. A count of 0 (a store visit with nothing on the list) asks about "your groceries".
+    static func carUnloadContent(itemCount: Int, isRepeat: Bool, repeatInterval: TimeInterval) -> UNMutableNotificationContent {
         let content = UNMutableNotificationContent()
         content.title = isRepeat ? "Still need to unload?" : "Groceries still in the car?"
         switch itemCount {
@@ -92,7 +93,10 @@ final class NotificationService: ObservableObject {
         }
         content.sound = .default
         content.categoryIdentifier = NotificationCategory.carUnload
-        content.userInfo = [NotificationUserInfo.itemCount: itemCount]
+        content.userInfo = [
+            NotificationUserInfo.itemCount: itemCount,
+            NotificationUserInfo.repeatInterval: repeatInterval,
+        ]
         return content
     }
 
@@ -218,6 +222,8 @@ enum NotificationCategory {
 
 enum NotificationUserInfo {
     static let itemCount = "itemCount"
+    /// Seconds until "Remind again" repeats the reminder.
+    static let repeatInterval = "repeatInterval"
 }
 
 enum NotificationAction {

@@ -128,7 +128,7 @@ final class LocationEventTests: XCTestCase {
         ) else { return XCTFail("Expected scheduleUnload") }
         XCTAssertEqual(itemCount, 0)
 
-        let content = NotificationService.carUnloadContent(itemCount: 0, isRepeat: false)
+        let content = NotificationService.carUnloadContent(itemCount: 0, isRepeat: false, repeatInterval: 300)
         XCTAssertEqual(content.body, "Don't forget to bring your groceries inside.")
         XCTAssertEqual(content.userInfo[NotificationUserInfo.itemCount] as? Int, 0)
     }
@@ -517,8 +517,27 @@ final class LocationEventTests: XCTestCase {
         XCTAssertEqual(scheduled.map(\.identifier), [NotificationID.carUnload])
         let request = try XCTUnwrap(scheduled.first)
         XCTAssertEqual(request.content.userInfo[NotificationUserInfo.itemCount] as? Int, 2)
+        // No interval in the notification: the preferences' is used, and kept for the next snooze.
         let trigger = try XCTUnwrap(request.trigger as? UNTimeIntervalNotificationTrigger)
         XCTAssertEqual(trigger.timeInterval, state.preferences.carUnloadRepeatInterval)
+        XCTAssertEqual(request.content.userInfo[NotificationUserInfo.repeatInterval] as? TimeInterval, state.preferences.carUnloadRepeatInterval)
+    }
+
+    /// On a cold launch the preferences haven't loaded, so the interval comes from the notification.
+    @MainActor
+    func testSnoozeUsesTheIntervalFromTheNotification() async throws {
+        let state = AppState.forTesting()
+        XCTAssertNotEqual(state.preferences.carUnloadRepeatInterval, 120)
+
+        await state.handleNotificationAction(
+            NotificationAction.snooze, category: NotificationCategory.carUnload, itemCount: 1, repeatInterval: 120
+        )
+
+        let request = try XCTUnwrap(state.notificationService.scheduledForTesting.last)
+        XCTAssertEqual(request.identifier, NotificationID.carUnload)
+        XCTAssertEqual((request.trigger as? UNTimeIntervalNotificationTrigger)?.timeInterval, 120)
+        XCTAssertEqual(request.content.userInfo[NotificationUserInfo.repeatInterval] as? TimeInterval, 120)
+        XCTAssertEqual(state.diagnostics.entries.last?.message, "Remind again in 2 min")
     }
 
     @MainActor
@@ -551,6 +570,7 @@ final class LocationEventTests: XCTestCase {
         XCTAssertEqual(service.scheduledForTesting.map(\.identifier), [NotificationID.carUnload, NotificationID.carUnloadRepeat])
         let first = try XCTUnwrap(service.scheduledForTesting.first)
         XCTAssertEqual(first.content.userInfo[NotificationUserInfo.itemCount] as? Int, 3)
+        XCTAssertEqual(first.content.userInfo[NotificationUserInfo.repeatInterval] as? TimeInterval, 300)
         XCTAssertEqual((first.trigger as? UNTimeIntervalNotificationTrigger)?.timeInterval, 600)
         XCTAssertEqual(service.pendingCount, 2)
 
@@ -626,9 +646,10 @@ final class LocationEventTests: XCTestCase {
     }
 
     @MainActor
-    func testUnloadNotificationCarriesTheItemCount() {
-        let content = NotificationService.carUnloadContent(itemCount: 3, isRepeat: false)
+    func testUnloadNotificationCarriesTheItemCountAndRepeatInterval() {
+        let content = NotificationService.carUnloadContent(itemCount: 3, isRepeat: false, repeatInterval: 120)
         XCTAssertEqual(content.userInfo[NotificationUserInfo.itemCount] as? Int, 3)
+        XCTAssertEqual(content.userInfo[NotificationUserInfo.repeatInterval] as? TimeInterval, 120)
         XCTAssertEqual(content.categoryIdentifier, NotificationCategory.carUnload)
     }
 

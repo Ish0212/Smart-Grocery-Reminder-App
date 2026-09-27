@@ -69,9 +69,16 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
     ) {
         let action = response.actionIdentifier
         let category = response.notification.request.content.categoryIdentifier
-        let itemCount = response.notification.request.content.userInfo[NotificationUserInfo.itemCount] as? Int
+        let userInfo = response.notification.request.content.userInfo
+        let itemCount = userInfo[NotificationUserInfo.itemCount] as? Int
+        let repeatInterval = userInfo[NotificationUserInfo.repeatInterval] as? TimeInterval
         Task { @MainActor in
-            await self.appState.handleNotificationAction(action, category: category, itemCount: itemCount)
+            await self.appState.handleNotificationAction(
+                action,
+                category: category,
+                itemCount: itemCount,
+                repeatInterval: repeatInterval
+            )
             completionHandler()
         }
     }

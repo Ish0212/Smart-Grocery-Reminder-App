@@ -443,9 +443,17 @@ final class AppState: ObservableObject {
 
     // MARK: - Notification actions
 
-    /// - Parameter itemCount: the count stored in the notification. After a cold launch the list
-    ///   may not have loaded yet, so it is preferred over counting `shoppingList`.
-    func handleNotificationAction(_ actionIdentifier: String, category: String, itemCount: Int? = nil) async {
+    /// After a cold launch the list and preferences may not have loaded yet, so what the
+    /// notification carries is preferred.
+    /// - Parameters:
+    ///   - itemCount: the count stored in the notification, preferred over counting `shoppingList`.
+    ///   - repeatInterval: the interval stored in the notification, preferred over the preferences'.
+    func handleNotificationAction(
+        _ actionIdentifier: String,
+        category: String,
+        itemCount: Int? = nil,
+        repeatInterval: TimeInterval? = nil
+    ) async {
         guard category == NotificationCategory.carUnload else { return }
         switch actionIdentifier {
         case NotificationAction.markDone:
@@ -456,13 +464,16 @@ final class AppState: ObservableObject {
                 diagnostics.record(.skipped, "Remind again: no item count and the list hasn't loaded", placeKind: .home)
                 return
             }
+            let stored = repeatInterval ?? 0
+            let interval = stored > 0 ? stored : preferences.carUnloadRepeatInterval
+            // Keeps the interval in the new reminder, so "Remind again" on it repeats the same way.
             await notificationService.scheduleHomeArrivalReminder(
-                after: preferences.carUnloadRepeatInterval,
+                after: interval,
                 itemCount: openCount,
                 repeats: false,
-                repeatInterval: 0
+                repeatInterval: interval
             )
-            diagnostics.record(.snoozed, "Remind again in \(Self.describe(seconds: preferences.carUnloadRepeatInterval))", placeKind: .home)
+            diagnostics.record(.snoozed, "Remind again in \(Self.describe(seconds: interval))", placeKind: .home)
         default:
             break
         }
