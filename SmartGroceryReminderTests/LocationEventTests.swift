@@ -391,6 +391,68 @@ final class LocationEventTests: XCTestCase {
         state.signOut()
     }
 
+    // MARK: - Saved places
+
+    @MainActor
+    func testOnlyEventsForSavedPlacesCount() {
+        let prefs = sessionPreferences
+        XCTAssertTrue(AppState.isSaved(enter(home), in: prefs))
+        XCTAssertTrue(AppState.isSaved(enter(store), in: prefs))
+        XCTAssertFalse(AppState.isSaved(LocationEvent(kind: .home, transition: .enter, placeId: "old-home", date: now), in: prefs))
+        XCTAssertFalse(AppState.isSaved(LocationEvent(kind: .groceryStore, transition: .enter, placeId: "deleted-store", date: now), in: prefs))
+        // A store id isn't a home, and a missing home matches nothing.
+        XCTAssertFalse(AppState.isSaved(LocationEvent(kind: .home, transition: .enter, placeId: store.id, date: now), in: prefs))
+        var noHome = prefs
+        noHome.homeLocation = nil
+        XCTAssertFalse(AppState.isSaved(enter(home), in: noHome))
+    }
+
+    /// Queued before the preferences loaded, for a home that has since been replaced.
+    @MainActor
+    func testQueuedArrivalAtAnOldHomeIsDropped() async throws {
+        let state = AppState.forTesting()
+        let user = AppUser(id: "moved-user", email: "m@b.c", displayName: "M")
+        try await state.listService.savePreferences(sessionPreferences, userId: user.id)
+        try await state.listService.upsert(item: GroceryItem(title: "Milk", isCompleted: true, completedBy: user.id), listId: user.id)
+        state.currentUser = user
+
+        state.handleLocationEvent(LocationEvent(kind: .home, transition: .enter, placeId: "old-home", date: Date()))
+        XCTAssertEqual(state.pendingLocationEvents.count, 1)
+
+        state.startSync(for: user)
+        try await waitUntil {
+            state.diagnostics.entries.contains { $0.kind == .dropped && $0.message.contains("place no longer saved") && $0.placeId == "old-home" }
+        }
+        XCTAssertTrue(state.pendingLocationEvents.isEmpty)
+        XCTAssertFalse(state.homeArrivalTimer.isActive)
+        XCTAssertTrue(state.notificationService.scheduledForTesting.isEmpty)
+        state.signOut()
+    }
+
+    @MainActor
+    func testADeletedStoreIsNotAShoppingTrip() async throws {
+        let state = try await loadedSession(items: [GroceryItem(title: "Milk")])
+
+        state.handleLocationEvent(LocationEvent(kind: .groceryStore, transition: .enter, placeId: "deleted-store", date: Date()))
+
+        XCTAssertNil(state.lastStoreVisit)
+        XCTAssertTrue(state.diagnostics.entries.contains { $0.kind == .dropped && $0.placeId == "deleted-store" })
+        XCTAssertTrue(state.notificationService.scheduledForTesting.isEmpty)
+        state.signOut()
+    }
+
+    @MainActor
+    func testSimulatedArrivalSkipsTheSavedPlaceCheck() async throws {
+        let state = try await loadedSession(items: [GroceryItem(title: "Milk")])
+
+        state.locationService.simulateArriveHome()
+
+        try await waitUntil { state.homeArrivalTimer.isActive }
+        try await waitUntil { state.diagnostics.entries.contains { $0.kind == .unloadScheduled } }
+        XCTAssertFalse(state.diagnostics.entries.contains { $0.kind == .dropped })
+        state.signOut()
+    }
+
     @MainActor
     func testRunningOutOfBackgroundTimeDropsQueuedEvents() {
         let activity = FakeBackgroundActivity()

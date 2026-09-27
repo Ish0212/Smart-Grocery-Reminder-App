@@ -248,9 +248,26 @@ final class AppState: ObservableObject {
             .sorted { $0.date < $1.date }
     }
 
+    /// Whether the event's place is still saved. A queued event can be for a place the loaded
+    /// preferences no longer have: an old home, or a store deleted since.
+    static func isSaved(_ event: LocationEvent, in preferences: UserPreferences) -> Bool {
+        switch event.kind {
+        case .home: return preferences.homeLocation?.id == event.placeId
+        case .groceryStore: return preferences.savedStores.contains { $0.id == event.placeId }
+        }
+    }
+
     private func processPendingLocationEvents() {
         guard sessionDataLoaded, !pendingLocationEvents.isEmpty else { return }
-        let events = pendingLocationEvents
+        var events: [LocationEvent] = []
+        for event in pendingLocationEvents {
+            // Simulated events have no saved place behind them.
+            if event.isSimulated || Self.isSaved(event, in: preferences) {
+                events.append(event)
+            } else {
+                diagnostics.record(.dropped, "Ignored \(Self.describe(event)): place no longer saved", placeKind: event.kind, placeId: event.placeId)
+            }
+        }
         pendingLocationEvents.removeAll()
         recordStoreVisits(in: events)
         let now = Date()
