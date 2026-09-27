@@ -296,7 +296,7 @@ final class FirestoreShoppingListService: ShoppingListServiceProtocol {
               let expiresAt = invite.get("expiresAt") as? Timestamp else { throw SharedListError.invalidCode }
         guard expiresAt.dateValue() > Date() else { throw SharedListError.expiredCode }
 
-        guard listId != userId, !(try await isMember(of: listId)) else {
+        guard listId != userId, !(await isMember(userId, of: listId)) else {
             // Your own list, or one you're already on: just switch to it.
             try await userDocument(userId).setData(["activeListId": listId], merge: true)
             return
@@ -314,14 +314,13 @@ final class FirestoreShoppingListService: ShoppingListServiceProtocol {
         }
     }
 
-    /// Non-members can't read a list, so a denied read means "not a member".
-    private func isMember(of listId: String) async throws -> Bool {
-        do {
-            _ = try await listDocument(listId).getDocument()
-            return true
-        } catch let error as FirestoreErrorCode where error.code == .permissionDenied {
-            return false
-        }
+    /// Asks the server, since a cached copy may predate being removed. Non-members can't read a
+    /// list, so a denied read means "not a member". Any other failure (offline) also answers no,
+    /// and the join write then decides.
+    private func isMember(_ userId: String, of listId: String) async -> Bool {
+        guard let snapshot = try? await listDocument(listId).getDocument(source: .server),
+              let memberIds = snapshot.get("memberIds") as? [String] else { return false }
+        return memberIds.contains(userId)
     }
 
     func leaveList(userId: String) async throws {
