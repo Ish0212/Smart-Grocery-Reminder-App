@@ -11,9 +11,11 @@ on:
         type: boolean
         default: false
 
+# A device build must not cancel the test run for the same commit, and main's test runs are never
+# cancelled; only a newer push to a pull request replaces the older run.
 concurrency:
-  group: ios-ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}-${{ inputs.device_ipa || false }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build-and-test:
