@@ -1,11 +1,12 @@
 # Smart Grocery Reminder App
 
-SwiftUI prototype for location-aware grocery lists and home-arrival “unload the car” reminders. It runs on a built-in mock backend, and switches to Firebase Auth + Firestore automatically when a `GoogleService-Info.plist` is present.
+SwiftUI app for location-aware grocery lists and home-arrival “unload the car” reminders. It runs on a built-in mock backend, and switches to Firebase Auth + Firestore automatically when a `GoogleService-Info.plist` is present. Releasing it to the App Store: [docs/app-store/release.md](docs/app-store/release.md).
 
-## Features in this prototype
+## Features
 
 - Shopping list with add / complete / delete
-- Email/password sign-in: Firebase Auth, or the mock backend (`demo@grocery.app` / `demo123`)
+- Email/password sign-in: Firebase Auth, or the mock backend (`demo@grocery.app` / `demo123`), with a password reset email
+- Account deletion in the app (Settings → Account → Delete Account): removes the list, places, settings and invites, then the account
 - List and preferences synced live with Firestore (loads from the local cache offline, updates across devices), or saved on the device in mock mode
 - Customizable home-arrival unload timer (5–30 minutes)
 - Core Location geofencing service for home + grocery stores
@@ -17,7 +18,8 @@ SwiftUI prototype for location-aware grocery lists and home-arrival “unload th
 - Settings for reminder preferences
 - Reminders survive iOS closing the app: geofence wake-ups are recognized after a relaunch and wait for the list to load
 - Diagnostics screen (Settings → Diagnostics): reminder-health checklist, geofence states and a shareable event log
-- Simulator hooks to fake store entry and home arrival
+- Simulator hooks to fake store entry and home arrival (demo and Debug builds only, never in the App Store build)
+- Privacy policy and support pages (`site/`, served by Firebase Hosting), linked from Settings → About
 
 ## Requirements
 
@@ -109,17 +111,21 @@ SmartGroceryReminder/
   Assets.xcassets
   Info.plist
 SmartGroceryReminderTests/  # XCTest unit tests
-.github/workflows/   # iOS CI
+SmartGroceryReminderUITests/  # takes the App Store screenshots
+SmartGroceryWidget/  # home-screen widget
+site/                # privacy policy and support pages (Firebase Hosting)
+.github/workflows/   # iOS CI, Firestore rules tests, App Store screenshots and upload
+docs/app-store/      # listing copy, privacy label, release steps
 docs/PLAN.md         # architecture & phased roadmap
 docs/phase-2-plan.md # Phase 2 (Polish) plan
 project.yml          # XcodeGen spec
 firestore.rules      # Firestore security rules
-firebase.json        # Firebase CLI config (deploys the rules)
+firebase.json        # Firebase CLI config (deploys the rules and the website)
 ```
 
 ## Firebase
 
-The Firebase SDK (`FirebaseAuth`, `FirebaseFirestore`) is already a Swift package dependency in `project.yml`. At launch, `FirebaseBootstrap` configures Firebase only if `GoogleService-Info.plist` is in the app bundle; otherwise the app uses the mock backend. **Settings → Account → Backend** shows which one is active.
+The Firebase SDK (`FirebaseAuth`, `FirebaseFirestore`) is already a Swift package dependency in `project.yml`. At launch, `FirebaseBootstrap` configures Firebase only if `GoogleService-Info.plist` is in the app bundle; otherwise the app uses the mock backend. In demo and Debug builds, **Settings → Account → Backend** shows which one is active.
 
 To use a real Firebase project:
 
@@ -127,9 +133,9 @@ To use a real Firebase project:
 2. **Authentication** → enable the **Email/Password** provider
 3. **Firestore Database** → create a database
 4. Download `GoogleService-Info.plist` to `SmartGroceryReminder/GoogleService-Info.plist` (gitignored), then run `xcodegen generate`
-5. Deploy the security rules: `firebase deploy --only firestore:rules` (with the [Firebase CLI](https://firebase.google.com/docs/cli)), or paste `firestore.rules` into the console's **Rules** tab
+5. Deploy the security rules and the privacy/support website: `firebase deploy --only firestore:rules,hosting` (with the [Firebase CLI](https://firebase.google.com/docs/cli))
 
-With Firebase, users stay signed in across launches. Data is stored under `users/{uid}`: `items/{itemId}` for list items and `preferences/main` for reminder settings. The rules only let a signed-in user read and write their own tree.
+With Firebase, users stay signed in across launches. Data is stored in `users/{uid}` (the active list, and `preferences/main` for reminder settings and saved places), `lists/{listId}` (members, and the shared `items/{itemId}`; a personal list's ID is its owner's uid) and `invites/{code}`. `firestore.rules` lets users reach only their own data and the lists they belong to; `firestore-tests/` tests the rules on the emulator.
 
 See [docs/PLAN.md](docs/PLAN.md) for data shape, geofence flow, and privacy notes.
 
@@ -142,8 +148,10 @@ The app ships an App Intent, **Add Grocery Item**, plus App Shortcuts, so you ca
 The Info.plist requests:
 
 - **When In Use** + **Always** location (geofences for stores & home)
-- Background location mode for region monitoring
+- No location background mode: iOS region monitoring relaunches the app when a geofence is crossed
 - Notification permission at runtime after sign-in
+
+The App Store privacy answers are in [docs/app-store/privacy-label.md](docs/app-store/privacy-label.md) and match `SmartGroceryReminder/PrivacyInfo.xcprivacy`.
 
 ## License
 
