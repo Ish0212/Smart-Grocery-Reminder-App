@@ -74,3 +74,25 @@ targets:
     settings:
       PRODUCT_BUNDLE_IDENTIFIER: com.smartgrocery.reminder.tests
       GENERATE_INFOPLIST_FILE: true
+  SmartGroceryReminderUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: SmartGroceryReminderUITests
+    dependencies:
+      - target: SmartGroceryReminder
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.smartgrocery.reminder.uitests
+      GENERATE_INFOPLIST_FILE: true
+      TEST_TARGET_NAME: SmartGroceryReminder
+
+schemes:
+  # Takes the App Store screenshots (app-store.yml); kept out of the regular test run.
+  Screenshots:
+    build:
+      targets:
+        SmartGroceryReminder: all
+        SmartGroceryReminderUITests: [test]
+    test:
+      targets:
+        - SmartGroceryReminderUITests

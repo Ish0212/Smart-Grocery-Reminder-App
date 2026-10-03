@@ -26,6 +26,12 @@ Privacy: your location is checked on the iPhone. Only the places you save and yo
 
 **Age rating:** 4+
 
+**Privacy Policy URL:** `https://<firebase-project-id>.web.app/privacy` (from `site/privacy.html`)
+
+**Support URL:** `https://<firebase-project-id>.web.app/support`
+
+**Screenshots:** the `app-store-screenshots` artifact of the App Store workflow. Release steps: `release.md`.
+
 ## App Review notes
 
 - **Why "Always" location:** reminders fire when the user enters a saved store or arrives home, while the app is closed. The app uses iOS region monitoring (up to 20 regions: home plus up to 19 stores). It doesn't track the live location continuously and has no location background mode.
