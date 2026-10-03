@@ -83,6 +83,12 @@ struct SettingsView: View {
 
                 Section("About") {
                     LabeledContent("Version", value: Self.version)
+                    if let privacyPolicy = AppLinks.privacyPolicy {
+                        Link("Privacy Policy", destination: privacyPolicy)
+                    }
+                    if let support = AppLinks.support {
+                        Link("Support", destination: support)
+                    }
                 }
             }
             .navigationTitle("Settings")

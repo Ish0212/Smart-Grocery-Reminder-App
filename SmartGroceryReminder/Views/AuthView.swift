@@ -9,6 +9,7 @@ struct AuthView: View {
     @State private var displayName = ""
     @State private var isLoading = false
     @State private var errorMessage: String?
+    @State private var infoMessage: String?
 
     enum Mode {
         case signIn, signUp
@@ -94,6 +95,13 @@ struct AuthView: View {
                     .accessibilityLabel("Error: \(errorMessage)")
             }
 
+            if let infoMessage {
+                Text(infoMessage)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
             Button {
                 Task { await submit() }
             } label: {
@@ -109,6 +117,21 @@ struct AuthView: View {
             .tint(Color("AccentGreen"))
             .disabled(isLoading || email.isEmpty || password.isEmpty)
             .accessibilityHint("Signs you into the grocery reminder app")
+
+            if mode == .signIn {
+                Button("Forgot password?") {
+                    Task { await sendPasswordReset() }
+                }
+                .font(.footnote)
+                .tint(Color("AccentGreen"))
+                .disabled(isLoading)
+            }
+
+            if let privacyPolicy = AppLinks.privacyPolicy {
+                Link("Privacy Policy", destination: privacyPolicy)
+                    .font(.footnote)
+                    .tint(.secondary)
+            }
         }
         .padding(20)
         .background(
@@ -134,8 +157,26 @@ struct AuthView: View {
         )
     }
 
+    private func sendPasswordReset() async {
+        errorMessage = nil
+        infoMessage = nil
+        guard !email.isEmpty else {
+            errorMessage = "Enter your email address, then tap Forgot password."
+            return
+        }
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            try await appState.sendPasswordReset(email: email)
+            infoMessage = "If \(email) has an account, we've emailed it a link to choose a new password."
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
     private func submit() async {
         isLoading = true
+        infoMessage = nil
         errorMessage = nil
         defer { isLoading = false }
         do {

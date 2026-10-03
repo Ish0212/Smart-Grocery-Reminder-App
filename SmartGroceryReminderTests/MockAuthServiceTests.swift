@@ -61,6 +61,17 @@ final class MockAuthServiceTests: XCTestCase {
         _ = try await service.signUp(email: "leaving@grocery.app", password: "secret2", displayName: "Back")
     }
 
+    func testPasswordResetChecksTheAddressOnly() async throws {
+        let service = MockAuthService()
+        try await service.sendPasswordReset(email: "nobody@grocery.app")
+        do {
+            try await service.sendPasswordReset(email: "not-an-email")
+            XCTFail("Expected invalidEmail")
+        } catch {
+            XCTAssertEqual(error as? AuthError, .invalidEmail)
+        }
+    }
+
     func testSignUpThenSignInRoundTrips() async throws {
         let service = MockAuthService()
         let created = try await service.signUp(email: "Shopper@Grocery.app", password: "secret1", displayName: "Shopper")

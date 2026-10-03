@@ -91,6 +91,11 @@ final class MockAuthService: AuthServiceProtocol {
         save()
     }
 
+    /// The demo backend can't send email; it only checks the address.
+    func sendPasswordReset(email: String) async throws {
+        guard email.contains("@") else { throw AuthError.invalidEmail }
+    }
+
     private var signedInAccount: MockAccount? {
         guard let userId = snapshot.signedInUserId else { return nil }
         return snapshot.accounts.values.first { $0.user.id == userId }
@@ -167,6 +172,17 @@ final class FirebaseAuthService: AuthServiceProtocol {
             try await user.delete()
         } catch {
             throw Self.mapError(error)
+        }
+    }
+
+    func sendPasswordReset(email: String) async throws {
+        do {
+            try await Auth.auth().sendPasswordReset(withEmail: email)
+        } catch {
+            let mapped = Self.mapError(error)
+            // No such user: answer as for a real account.
+            if mapped as? AuthError == .invalidCredentials { return }
+            throw mapped
         }
     }
 

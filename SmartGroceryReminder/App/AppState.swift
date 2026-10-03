@@ -684,6 +684,11 @@ final class AppState: ObservableObject {
         requestedTab = nil
     }
 
+    /// Emails a link to choose a new password.
+    func sendPasswordReset(email: String) async throws {
+        try await authService.sendPasswordReset(email: email.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
     /// Deletes the account and everything stored for it (App Store guideline 5.1.1(v)). The password
     /// is checked first, so a wrong one changes nothing.
     func deleteAccount(password: String) async throws {

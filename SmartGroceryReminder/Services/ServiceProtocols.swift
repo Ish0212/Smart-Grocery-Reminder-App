@@ -27,6 +27,9 @@ protocol AuthServiceProtocol {
     func reauthenticate(password: String) async throws
     /// Deletes the signed-in user's account. Delete their data first: afterwards the backend refuses them.
     func deleteAccount() async throws
+    /// Emails a link to choose a new password. Succeeds for an unknown email too, so it can't be
+    /// used to find out who has an account.
+    func sendPasswordReset(email: String) async throws
 }
 
 protocol ShoppingListServiceProtocol {
