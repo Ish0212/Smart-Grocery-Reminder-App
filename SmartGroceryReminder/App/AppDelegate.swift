@@ -11,20 +11,36 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     private static let isTesting = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
         || NSClassFromString("XCTestCase") != nil
 
+    /// Set by the screenshot UI test (AppStoreScreenshots.swift). Read from the arguments, not
+    /// UserDefaults, which the privacy manifest would have to declare.
+    private static let isTakingScreenshots = ProcessInfo.processInfo.arguments.contains("--app-store-screenshots")
+
+    #if DEBUG
+    private static let isDebugBuild = true
+    #else
+    private static let isDebugBuild = false
+    #endif
+
     let appState: AppState = {
         let isTesting = AppDelegate.isTesting
         // Firebase must be configured before AppState picks its backend.
         if !isTesting {
             FirebaseBootstrap.configureIfAvailable()
         }
+        let useMockBackend = isTesting || !FirebaseBootstrap.isConfigured
         let state = AppState(
-            useMockBackend: isTesting || !FirebaseBootstrap.isConfigured,
+            useMockBackend: useMockBackend,
             mockStorageDirectory: isTesting ? nil : AppFiles.directory,
             diagnostics: DiagnosticsLog(store: isTesting ? nil : JSONFileStore<[DiagnosticEntry]>.appSupport("diagnostics.json")),
             backgroundActivity: isTesting ? NoBackgroundActivity() : UIKitBackgroundActivity(),
             stateDirectory: isTesting ? nil : AppFiles.directory,
             widgetStore: isTesting ? nil : WidgetSnapshotStore.shared(),
-            systemServices: !isTesting
+            systemServices: !isTesting,
+            showsTestTools: AppState.showsTestTools(
+                useMockBackend: useMockBackend,
+                isDebugBuild: AppDelegate.isDebugBuild,
+                takingScreenshots: AppDelegate.isTakingScreenshots
+            )
         )
         // With @UIApplicationDelegateAdaptor, UIApplication.shared.delegate is SwiftUI's own
         // delegate, so App Intents reach this state through AppState.shared instead.

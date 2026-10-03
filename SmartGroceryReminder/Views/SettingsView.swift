@@ -12,7 +12,9 @@ struct SettingsView: View {
                         LabeledContent("Name", value: user.displayName)
                         LabeledContent("Email", value: user.email)
                     }
-                    LabeledContent("Backend", value: appState.useMockBackend ? "Mock (prototype)" : "Firebase")
+                    if appState.showsTestTools {
+                        LabeledContent("Backend", value: appState.useMockBackend ? "Mock (prototype)" : "Firebase")
+                    }
                     Button("Sign Out", role: .destructive) {
                         appState.signOut()
                     }
@@ -56,9 +58,7 @@ struct SettingsView: View {
                 }
 
                 Section("About") {
-                    Text("Prototype for location-aware grocery lists, home-arrival unload timers, and Firebase-ready sync.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+                    LabeledContent("Version", value: Self.version)
                 }
             }
             .navigationTitle("Settings")
@@ -71,6 +71,14 @@ struct SettingsView: View {
                 Task { await appState.savePreferences() }
             }
         }
+    }
+
+    /// e.g. "1.0 (12)": the marketing version and the build number.
+    private static var version: String {
+        let info = Bundle.main.infoDictionary
+        let marketing = info?["CFBundleShortVersionString"] as? String ?? "?"
+        let build = info?["CFBundleVersion"] as? String ?? "?"
+        return "\(marketing) (\(build))"
     }
 
     private var reminderDateBinding: Binding<Date> {

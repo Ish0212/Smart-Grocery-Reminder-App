@@ -9,6 +9,8 @@ final class AppStoreScreenshots: XCTestCase {
 
     override func setUp() {
         continueAfterFailure = false
+        // Hides the simulate buttons and the demo store (AppState.showsTestTools).
+        app.launchArguments = ["--app-store-screenshots"]
         app.launch()
     }
 

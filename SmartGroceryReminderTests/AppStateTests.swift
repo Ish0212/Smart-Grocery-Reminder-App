@@ -16,6 +16,15 @@ final class AppStateTests: XCTestCase {
     }
 
     @MainActor
+    func testTestToolsAreForTheDemoAndDebugBuildsButNeverTheScreenshots() {
+        XCTAssertTrue(AppState.showsTestTools(useMockBackend: true, isDebugBuild: false, takingScreenshots: false))
+        XCTAssertTrue(AppState.showsTestTools(useMockBackend: false, isDebugBuild: true, takingScreenshots: false))
+        // The App Store build.
+        XCTAssertFalse(AppState.showsTestTools(useMockBackend: false, isDebugBuild: false, takingScreenshots: false))
+        XCTAssertFalse(AppState.showsTestTools(useMockBackend: true, isDebugBuild: true, takingScreenshots: true))
+    }
+
+    @MainActor
     func testASessionArmsGeofencesWithoutTouchingTheSystem() async throws {
         let state = AppState.forTesting()
         try await state.signUp(email: "inert@example.com", password: "secret1", displayName: "Inert")

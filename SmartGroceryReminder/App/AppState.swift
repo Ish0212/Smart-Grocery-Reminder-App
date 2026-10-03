@@ -11,6 +11,8 @@ final class AppState: ObservableObject {
     @Published var shoppingList: [GroceryItem]
     @Published var preferences: UserPreferences
     @Published var useMockBackend: Bool
+    /// The simulate buttons and the demo store (see `showsTestTools(useMockBackend:isDebugBuild:takingScreenshots:)`).
+    let showsTestTools: Bool
     /// True once the signed-in user's saved preferences have arrived. Until then `preferences`
     /// holds defaults, so nothing is saved (it would overwrite the real ones).
     @Published private(set) var preferencesLoaded = false
@@ -67,6 +69,7 @@ final class AppState: ObservableObject {
     ///   - widgetStore: where the home-screen widget's snapshot is written; `nil` for no widget.
     ///   - systemServices: `false` (tests) makes the location and notification services inert:
     ///     they only record what they would do, and never ask for permission.
+    ///   - showsTestTools: whether the simulate buttons and the demo store are offered.
     init(
         useMockBackend: Bool = true,
         mockStorageDirectory: URL? = nil,
@@ -74,11 +77,13 @@ final class AppState: ObservableObject {
         backgroundActivity: BackgroundActivityProviding? = nil,
         stateDirectory: URL? = nil,
         widgetStore: WidgetSnapshotStore? = nil,
-        systemServices: Bool = true
+        systemServices: Bool = true,
+        showsTestTools: Bool = true
     ) {
         // Defaults are created here: in Swift 5 mode a default argument can't call a main-actor initializer.
         let diagnostics = diagnostics ?? DiagnosticsLog()
         self.useMockBackend = useMockBackend
+        self.showsTestTools = showsTestTools
         if useMockBackend {
             self.authService = MockAuthService(
                 store: mockStorageDirectory.map { JSONFileStore<MockAuthSnapshot>(url: $0.appendingPathComponent("mock-auth.json")) }
@@ -114,6 +119,13 @@ final class AppState: ObservableObject {
 
         refreshUnloadOutstanding()
         bindServices()
+    }
+
+    /// The simulate buttons and the demo store fake location events, which App Review and real users
+    /// must never see: they're offered in the demo build (no Firebase) and Debug builds only, and
+    /// hidden while the App Store screenshots are taken.
+    static func showsTestTools(useMockBackend: Bool, isDebugBuild: Bool, takingScreenshots: Bool) -> Bool {
+        !takingScreenshots && (useMockBackend || isDebugBuild)
     }
 
     private func bindServices() {

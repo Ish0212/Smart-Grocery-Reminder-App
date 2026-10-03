@@ -53,18 +53,20 @@ struct LocationsView: View {
                         searchKind = .groceryStore
                     }
 
-                    Button("Add demo store near SF") {
-                        addPlace(GeoPlace(
-                            name: "Fresh Mart",
-                            latitude: 37.7810,
-                            longitude: -122.4110,
-                            radiusMeters: 180,
-                            kind: .groceryStore
-                        ))
-                    }
+                    if appState.showsTestTools {
+                        Button("Add demo store near SF") {
+                            addPlace(GeoPlace(
+                                name: "Fresh Mart",
+                                latitude: 37.7810,
+                                longitude: -122.4110,
+                                radiusMeters: 180,
+                                kind: .groceryStore
+                            ))
+                        }
 
-                    Button("Simulate entering a store") {
-                        locationService.simulateEnterStore()
+                        Button("Simulate entering a store") {
+                            locationService.simulateEnterStore()
+                        }
                     }
                 } header: {
                     Text("Grocery stores")
