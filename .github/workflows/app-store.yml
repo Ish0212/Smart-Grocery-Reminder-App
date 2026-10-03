@@ -37,19 +37,22 @@ jobs:
           key: spm-v2-${{ runner.os }}-${{ hashFiles('project.yml') }}
           restore-keys: spm-v2-${{ runner.os }}-
 
-      # App Store Connect needs 6.9" (or 6.5") iPhone screenshots; a Pro Max simulator gives the 6.9" size.
+      # App Store Connect needs 6.9" iPhone screenshots; the newest Pro Max simulator has that screen.
+      # supportedDeviceTypes isn't sorted by age, so pick the highest model number on the newest runtime.
       - name: Create a Pro Max simulator
         id: sim
         run: |
           for XC in $(ls -d /Applications/Xcode_*.app | sort -rV); do
             sudo xcode-select -s "$XC"
             read -r DEVTYPE RUNTIME < <(xcrun simctl list runtimes available -j 2>/dev/null | python3 -c '
-          import json, sys
-          rts = [r for r in json.load(sys.stdin)["runtimes"] if r["platform"] == "iOS"]
-          for rt in reversed(rts):
-              dts = [d for d in rt["supportedDeviceTypes"] if "Pro Max" in d["name"]]
-              if dts:
-                  print(dts[-1]["identifier"], rt["identifier"]); break
+          import json, re, sys
+          version = lambda rt: tuple(int(part) for part in rt["version"].split("."))
+          rts = sorted((r for r in json.load(sys.stdin)["runtimes"] if r["platform"] == "iOS"), key=version, reverse=True)
+          for rt in rts:
+              models = [(int(m.group(1)), d) for d in rt["supportedDeviceTypes"] if (m := re.fullmatch(r"iPhone (\d+) Pro Max", d["name"]))]
+              if models:
+                  print(max(models, key=lambda pair: pair[0])[1]["identifier"], rt["identifier"])
+                  break
           ' || true)
             [ -n "$RUNTIME" ] && break
           done
@@ -58,8 +61,8 @@ jobs:
           echo "Creating $DEVTYPE on $RUNTIME"
           UDID=$(xcrun simctl create "Screenshots" "$DEVTYPE" "$RUNTIME")
           xcrun simctl boot "$UDID"
-          # Clean status bar: 9:41, full battery and signal.
-          xcrun simctl status_bar "$UDID" override --time "9:41" --batteryState charged --batteryLevel 100 \
+          # Clean status bar: 9:41, a full battery (no charging bolt) and full signal.
+          xcrun simctl status_bar "$UDID" override --time "9:41" --batteryState discharging --batteryLevel 100 \
             --cellularMode active --cellularBars 4 --wifiBars 3
           echo "udid=$UDID" >> "$GITHUB_OUTPUT"
 
@@ -89,7 +92,16 @@ jobs:
                   os.rename(os.path.join(d, a["exportedFileName"]), os.path.join(d, a["suggestedHumanReadableName"].split("_")[0] + ".png"))
           PY
           ls -l build/screenshots
-          sips -g pixelWidth -g pixelHeight build/screenshots/*.png
+          # The 6.9" sizes App Store Connect accepts (portrait).
+          for PNG in build/screenshots/*.png; do
+            SIZE="$(sips -g pixelWidth "$PNG" | awk '/pixelWidth/ {print $2}')x$(sips -g pixelHeight "$PNG" | awk '/pixelHeight/ {print $2}')"
+            echo "$PNG: $SIZE"
+            case "$SIZE" in
+              1320x2868|1290x2796|1260x2736) ;;
+              *) echo "::error::$PNG is $SIZE, not a 6.9-inch iPhone screenshot size"; exit 1 ;;
+            esac
+          done
+          test "$(ls build/screenshots/*.png | wc -l)" -eq 4
 
       - name: Upload the screenshots
         uses: actions/upload-artifact@v7
