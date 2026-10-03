@@ -118,7 +118,7 @@ final class LocationService: NSObject, ObservableObject {
         monitoredRegions = places.map(\.name)
         systemRegionCount = currentRegions.count
         regionStates = regionStates.filter { desired[$0.key] != nil }
-        lastEventDescription = places.isEmpty ? "No geofences configured" : "Monitoring \(places.count) place(s)"
+        lastEventDescription = places.isEmpty ? "No geofences configured" : "Monitoring \(places.count) place\(places.count == 1 ? "" : "s")"
         if !diff.start.isEmpty || !diff.stop.isEmpty {
             diagnostics.record(.monitoring, "Geofences updated: \(diff.start.count) added, \(diff.stop.count) removed, \(places.count) total")
         }

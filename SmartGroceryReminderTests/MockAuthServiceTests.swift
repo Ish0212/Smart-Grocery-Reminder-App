@@ -40,6 +40,38 @@ final class MockAuthServiceTests: XCTestCase {
         }
     }
 
+    func testDeletingAnAccountNeedsItsPasswordAndFreesTheEmail() async throws {
+        let service = MockAuthService()
+        _ = try await service.signUp(email: "leaving@grocery.app", password: "secret1", displayName: "Leaving")
+        do {
+            try await service.reauthenticate(password: "wrong12")
+            XCTFail("Expected invalidCredentials")
+        } catch {
+            XCTAssertEqual(error as? AuthError, .invalidCredentials)
+        }
+
+        try await service.reauthenticate(password: "secret1")
+        try await service.deleteAccount()
+        do {
+            _ = try await service.signIn(email: "leaving@grocery.app", password: "secret1")
+            XCTFail("Expected invalidCredentials")
+        } catch {
+            XCTAssertEqual(error as? AuthError, .invalidCredentials)
+        }
+        _ = try await service.signUp(email: "leaving@grocery.app", password: "secret2", displayName: "Back")
+    }
+
+    func testPasswordResetChecksTheAddressOnly() async throws {
+        let service = MockAuthService()
+        try await service.sendPasswordReset(email: "nobody@grocery.app")
+        do {
+            try await service.sendPasswordReset(email: "not-an-email")
+            XCTFail("Expected invalidEmail")
+        } catch {
+            XCTAssertEqual(error as? AuthError, .invalidEmail)
+        }
+    }
+
     func testSignUpThenSignInRoundTrips() async throws {
         let service = MockAuthService()
         let created = try await service.signUp(email: "Shopper@Grocery.app", password: "secret1", displayName: "Shopper")

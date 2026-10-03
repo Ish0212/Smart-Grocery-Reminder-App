@@ -1,0 +1,198 @@
+name: App Store
+
+# screenshots: runs on pull requests and from the Actions tab; the PNGs are a workflow artifact.
+# release: run from the Actions tab (`gh workflow run app-store.yml -f release=true`) once the
+# secrets in docs/app-store/release.md are set. It archives a signed build and uploads it to App Store Connect.
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: Archive, sign and upload a build to App Store Connect
+        type: boolean
+        default: false
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.release || false }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  screenshots:
+    if: ${{ !inputs.release }}
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate --spec project.yml
+
+      - name: Cache Swift packages
+        uses: actions/cache@v6
+        with:
+          path: .spm
+          key: spm-v2-${{ runner.os }}-${{ hashFiles('project.yml') }}
+          restore-keys: spm-v2-${{ runner.os }}-
+
+      # App Store Connect needs 6.9" iPhone screenshots; the newest Pro Max simulator has that screen.
+      # supportedDeviceTypes isn't sorted by age, so pick the highest model number on the newest runtime.
+      - name: Create a Pro Max simulator
+        id: sim
+        run: |
+          for XC in $(ls -d /Applications/Xcode_*.app | sort -rV); do
+            sudo xcode-select -s "$XC"
+            read -r DEVTYPE RUNTIME < <(xcrun simctl list runtimes available -j 2>/dev/null | python3 -c '
+          import json, re, sys
+          version = lambda rt: tuple(int(part) for part in rt["version"].split("."))
+          rts = sorted((r for r in json.load(sys.stdin)["runtimes"] if r["platform"] == "iOS"), key=version, reverse=True)
+          for rt in rts:
+              models = [(int(m.group(1)), d) for d in rt["supportedDeviceTypes"] if (m := re.fullmatch(r"iPhone (\d+) Pro Max", d["name"]))]
+              if models:
+                  print(max(models, key=lambda pair: pair[0])[1]["identifier"], rt["identifier"])
+                  break
+          ' || true)
+            [ -n "$RUNTIME" ] && break
+          done
+          test -n "$RUNTIME"
+          xcodebuild -version
+          echo "Creating $DEVTYPE on $RUNTIME"
+          UDID=$(xcrun simctl create "Screenshots" "$DEVTYPE" "$RUNTIME")
+          xcrun simctl boot "$UDID"
+          # Clean status bar: 9:41, a full battery (no charging bolt) and full signal.
+          xcrun simctl status_bar "$UDID" override --time "9:41" --batteryState discharging --batteryLevel 100 \
+            --cellularMode active --cellularBars 4 --wifiBars 3
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+
+      - name: Take the screenshots
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project SmartGroceryReminder.xcodeproj \
+            -scheme Screenshots \
+            -clonedSourcePackagesDirPath .spm \
+            -destination "id=${{ steps.sim.outputs.udid }}" \
+            -resultBundlePath build/Screenshots.xcresult \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" \
+            test
+
+      - name: Export the screenshots
+        run: |
+          mkdir -p build/screenshots
+          xcrun xcresulttool export attachments --path build/Screenshots.xcresult --output-path build/screenshots
+          # Name each PNG after its attachment (1-List.png, ...).
+          python3 - <<'PY'
+          import json, os
+          d = "build/screenshots"
+          for test in json.load(open(os.path.join(d, "manifest.json"))):
+              for a in test["attachments"]:
+                  os.rename(os.path.join(d, a["exportedFileName"]), os.path.join(d, a["suggestedHumanReadableName"].split("_")[0] + ".png"))
+          PY
+          ls -l build/screenshots
+          # The 6.9" sizes App Store Connect accepts (portrait).
+          for PNG in build/screenshots/*.png; do
+            SIZE="$(sips -g pixelWidth "$PNG" | awk '/pixelWidth/ {print $2}')x$(sips -g pixelHeight "$PNG" | awk '/pixelHeight/ {print $2}')"
+            echo "$PNG: $SIZE"
+            case "$SIZE" in
+              1320x2868|1290x2796|1260x2736) ;;
+              *) echo "::error::$PNG is $SIZE, not a 6.9-inch iPhone screenshot size"; exit 1 ;;
+            esac
+          done
+          test "$(ls build/screenshots/*.png | wc -l)" -eq 4
+
+      - name: Upload the screenshots
+        uses: actions/upload-artifact@v7
+        with:
+          name: app-store-screenshots
+          path: build/screenshots/*.png
+
+  release:
+    if: ${{ inputs.release }}
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check the secrets are set
+        run: |
+          for NAME in ASC_KEY_ID ASC_ISSUER_ID TEAM_ID; do
+            test -n "${!NAME}" || { echo "::error::Secret for $NAME is missing (see docs/app-store/release.md)"; exit 1; }
+          done
+          test -n "${{ secrets.ASC_KEY_P8 }}" || { echo "::error::ASC_KEY_P8 is missing"; exit 1; }
+          test -n "${{ secrets.GOOGLE_SERVICE_INFO_PLIST }}" || { echo "::error::GOOGLE_SERVICE_INFO_PLIST is missing"; exit 1; }
+
+      # App Store uploads must be built with the iOS 26 SDK or later.
+      - name: Select newest Xcode
+        run: |
+          sudo xcode-select -s "$(ls -d /Applications/Xcode_*.app | sort -rV | head -1)"
+          xcodebuild -version
+          xcodebuild -showsdks | grep -E 'iphoneos(2[6-9]|[3-9][0-9])'
+
+      # Without it the app falls back to the on-device demo backend, which must never ship.
+      - name: Add the Firebase config
+        run: |
+          echo "${{ secrets.GOOGLE_SERVICE_INFO_PLIST }}" | base64 --decode > SmartGroceryReminder/GoogleService-Info.plist
+          plutil -lint SmartGroceryReminder/GoogleService-Info.plist
+
+      - name: Write the App Store Connect API key
+        run: |
+          mkdir -p ~/private_keys
+          echo "${{ secrets.ASC_KEY_P8 }}" | base64 --decode > ~/private_keys/AuthKey_$ASC_KEY_ID.p8
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate --spec project.yml
+
+      # Each upload needs a new build number; the run number always grows.
+      - name: Archive
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project SmartGroceryReminder.xcodeproj \
+            -scheme SmartGroceryReminder \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/SmartGroceryReminder.xcarchive \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath ~/private_keys/AuthKey_$ASC_KEY_ID.p8 \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            CODE_SIGN_STYLE=Automatic \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} \
+            archive
+
+      - name: Check the archive ships Firebase, not the demo backend
+        run: test -f build/SmartGroceryReminder.xcarchive/Products/Applications/SmartGroceryReminder.app/GoogleService-Info.plist
+
+      - name: Upload to App Store Connect
+        run: |
+          cat > build/ExportOptions.plist <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>teamID</key><string>$TEAM_ID</string>
+            <key>signingStyle</key><string>automatic</string>
+          </dict>
+          </plist>
+          PLIST
+          xcodebuild -exportArchive \
+            -archivePath build/SmartGroceryReminder.xcarchive \
+            -exportOptionsPlist build/ExportOptions.plist \
+            -exportPath build/export \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath ~/private_keys/AuthKey_$ASC_KEY_ID.p8 \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID"

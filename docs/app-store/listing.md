@@ -26,10 +26,19 @@ Privacy: your location is checked on the iPhone. Only the places you save and yo
 
 **Age rating:** 4+
 
+**Privacy Policy URL:** `https://<firebase-project-id>.web.app/privacy` (from `site/privacy.html`)
+
+**Support URL:** `https://<firebase-project-id>.web.app/support`
+
+**Screenshots:** the `app-store-screenshots` artifact of the App Store workflow. Release steps: `release.md`.
+
 ## App Review notes
 
 - **Why "Always" location:** reminders fire when the user enters a saved store or arrives home, while the app is closed. The app uses iOS region monitoring (up to 20 regions: home plus up to 19 stores). It doesn't track the live location continuously and has no location background mode.
 - **Demo account:** provide a Firebase test account here before submitting (the mock demo account `demo@grocery.app` / `demo123` only exists in builds without `GoogleService-Info.plist`).
 - **How to test the reminders:** the "Simulate entering a store" (Places) and "Simulate arrive home" (Arrival) buttons exist only in the demo build (without `GoogleService-Info.plist`) and Debug builds, so they can't skew real reminder stats. In the review build, save a store and home near you from Places. Settings → Diagnostics shows the reminder health checklist and the event log.
 - **Shared lists:** Settings → Shared list → "Invite someone" creates a code (valid 7 days) that a second account enters under "Join a list with a code". Both accounts then see and edit the same items; reminders stay on each phone. A member can leave with "Leave shared list".
-- **Account deletion (guideline 5.1.1(v)):** Settings → Account → "Delete account". After the user confirms with their password, the app leaves any shared list, deletes the user's list, items, saved places, preferences and invite codes from Firestore, then deletes the Firebase account.
+- **Account deletion (guideline 5.1.1(v)):** Settings → Account → "Delete Account". After the user confirms with their password, the app leaves any list they joined, deletes their list, items, saved places, preferences and invite codes from Firestore, then deletes the Firebase account. A list they shared is deleted for its members too (the confirmation says so), and the on-device log and stats are cleared.
+- **Privacy policy (guideline 5.1.1(i)):** linked in the app under Settings → About → "Privacy Policy" and on the sign-in screen.
+- **Sign in with Apple (guideline 4.8):** not required: the app has only its own email/password accounts, with no third-party or social sign-in.
+- **Forgotten password:** "Forgot password?" on the sign-in screen emails a reset link.

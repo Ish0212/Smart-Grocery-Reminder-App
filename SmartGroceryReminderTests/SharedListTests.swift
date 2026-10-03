@@ -34,6 +34,46 @@ final class MockSharedListTests: XCTestCase {
         try await stream.first { _ in true }
     }
 
+    func testDeletingAnOwnersDataRemovesTheirListForEveryone() async throws {
+        let service = MockShoppingListService()
+        try await service.upsert(item: GroceryItem(title: "Milk"), listId: "alice")
+        let code = try await service.createInvite(userId: "alice")
+        try await service.joinList(code: code, userId: "bob")
+        let bobsItems = await service.observeItems(listId: "alice", userId: "bob")
+
+        try await service.deleteAllData(userId: "alice")
+
+        do {
+            for try await _ in bobsItems {}
+            XCTFail("Expected removedFromList")
+        } catch let error as SharedListError {
+            XCTAssertEqual(error, .removedFromList)
+        }
+        let items = try await first(await service.observeItems(listId: "alice"))
+        XCTAssertEqual(items?.count, 0)
+        do {
+            try await service.joinList(code: code, userId: "carol")
+            XCTFail("Expected invalidCode")
+        } catch let error as SharedListError {
+            XCTAssertEqual(error, .invalidCode)
+        }
+        // Leave takes bob back to his own list, as it does after a removal.
+        try await service.leaveList(userId: "bob")
+        let bobsList = try await first(await service.observeActiveList(userId: "bob"))
+        XCTAssertEqual(bobsList, "bob")
+    }
+
+    func testDeletingAMembersDataTakesThemOffTheListTheyJoined() async throws {
+        let service = MockShoppingListService()
+        let code = try await service.createInvite(userId: "alice")
+        try await service.joinList(code: code, userId: "bob")
+
+        try await service.deleteAllData(userId: "bob")
+
+        let info = try await service.listInfo(listId: "alice")
+        XCTAssertEqual(info.memberIds, ["alice"])
+    }
+
     func testEveryoneStartsOnTheirOwnList() async throws {
         let service = MockShoppingListService()
         let active = try await first(await service.observeActiveList(userId: "alice"))

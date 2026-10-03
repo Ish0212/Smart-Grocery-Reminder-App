@@ -70,19 +70,13 @@ struct HomeArrivalView: View {
             Text("Remind me after")
                 .font(.headline)
 
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 70), spacing: 10)], spacing: 10) {
+            // Segments never wrap, unlike buttons in a grid ("30 min" broke onto two lines).
+            Picker("Remind me after", selection: delayBinding) {
                 ForEach(timer.presetDelays, id: \.seconds) { preset in
-                    Button(preset.label) {
-                        timer.selectedDelay = preset.seconds
-                        appState.preferences.homeArrivalDelay = preset.seconds
-                        Task { await appState.savePreferences() }
-                    }
-                    .buttonStyle(.bordered)
-                    .tint(timer.selectedDelay == preset.seconds ? Color("AccentGreen") : .secondary)
-                    .accessibilityLabel("Remind after \(preset.label)")
-                    .accessibilityAddTraits(timer.selectedDelay == preset.seconds ? .isSelected : [])
+                    Text(preset.label).tag(preset.seconds)
                 }
             }
+            .pickerStyle(.segmented)
         }
         .padding(20)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -92,18 +86,30 @@ struct HomeArrivalView: View {
         )
     }
 
+    private var delayBinding: Binding<TimeInterval> {
+        Binding {
+            timer.selectedDelay
+        } set: { seconds in
+            timer.selectedDelay = seconds
+            appState.preferences.homeArrivalDelay = seconds
+            Task { await appState.savePreferences() }
+        }
+    }
+
     private var actions: some View {
         VStack(spacing: 12) {
-            Button {
-                // AppState handles it like a real arrival: timer + reminder.
-                locationService.simulateArriveHome()
-            } label: {
-                Label("Simulate arrive home", systemImage: "location.fill")
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 8)
+            if appState.showsTestTools {
+                Button {
+                    // AppState handles it like a real arrival: timer + reminder.
+                    locationService.simulateArriveHome()
+                } label: {
+                    Label("Simulate arrive home", systemImage: "location.fill")
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Color("AccentGreen"))
             }
-            .buttonStyle(.borderedProminent)
-            .tint(Color("AccentGreen"))
 
             // Also after the countdown ends, until the groceries are marked brought in.
             if timer.isActive || appState.unloadOutstanding {

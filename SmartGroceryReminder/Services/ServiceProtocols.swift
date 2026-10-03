@@ -23,6 +23,13 @@ protocol AuthServiceProtocol {
     func signOut()
     /// Calls `onRestore` on the main thread with a user still signed in from a previous launch, if any.
     func restoreSession(_ onRestore: @escaping (AppUser) -> Void)
+    /// Checks the signed-in user's password again. Firebase deletes an account only after a recent sign-in.
+    func reauthenticate(password: String) async throws
+    /// Deletes the signed-in user's account. Delete their data first: afterwards the backend refuses them.
+    func deleteAccount() async throws
+    /// Emails a link to choose a new password. Succeeds for an unknown email too, so it can't be
+    /// used to find out who has an account.
+    func sendPasswordReset(email: String) async throws
 }
 
 protocol ShoppingListServiceProtocol {
@@ -49,6 +56,9 @@ protocol ShoppingListServiceProtocol {
     /// Leaves the active list (if it's someone else's) and goes back to the user's own list. Also
     /// works for someone the owner already removed.
     func leaveList(userId: String) async throws
+    /// For account deletion: leaves a list the user joined, then deletes their own list with its
+    /// items, their invites, preferences and user document. Members of their list lose access to it.
+    func deleteAllData(userId: String) async throws
 }
 
 /// Configures Firebase only when GoogleService-Info.plist is bundled.

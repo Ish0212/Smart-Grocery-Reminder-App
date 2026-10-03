@@ -16,6 +16,15 @@ final class AppStateTests: XCTestCase {
     }
 
     @MainActor
+    func testTestToolsAreForTheDemoAndDebugBuildsButNeverTheScreenshots() {
+        XCTAssertTrue(AppState.showsTestTools(useMockBackend: true, isDebugBuild: false, takingScreenshots: false))
+        XCTAssertTrue(AppState.showsTestTools(useMockBackend: false, isDebugBuild: true, takingScreenshots: false))
+        // The App Store build.
+        XCTAssertFalse(AppState.showsTestTools(useMockBackend: false, isDebugBuild: false, takingScreenshots: false))
+        XCTAssertFalse(AppState.showsTestTools(useMockBackend: true, isDebugBuild: true, takingScreenshots: true))
+    }
+
+    @MainActor
     func testASessionArmsGeofencesWithoutTouchingTheSystem() async throws {
         let state = AppState.forTesting()
         try await state.signUp(email: "inert@example.com", password: "secret1", displayName: "Inert")
@@ -31,6 +40,38 @@ final class AppStateTests: XCTestCase {
 
         state.signOut()
         XCTAssertTrue(state.locationService.monitoredForTesting.isEmpty)
+    }
+
+    @MainActor
+    func testDeletingTheAccountChecksThePasswordThenRemovesTheData() async throws {
+        let state = AppState.forTesting()
+        try await state.signUp(email: "gone@example.com", password: "secret1", displayName: "Gone")
+        let userId = try XCTUnwrap(state.currentUser?.id)
+        try await waitUntil { state.sessionDataLoaded }
+        await state.addItem("Milk")
+
+        do {
+            try await state.deleteAccount(password: "wrong12")
+            XCTFail("Expected invalidCredentials")
+        } catch {
+            XCTAssertEqual(error as? AuthError, .invalidCredentials)
+        }
+        XCTAssertTrue(state.isAuthenticated)
+        XCTAssertEqual(state.shoppingList.map(\.title), ["Milk"])
+
+        try await state.deleteAccount(password: "secret1")
+
+        XCTAssertFalse(state.isAuthenticated)
+        XCTAssertTrue(state.locationService.monitoredForTesting.isEmpty)
+        XCTAssertTrue(state.diagnostics.entries.isEmpty)
+        let items = try await state.listService.observeItems(listId: userId).first { _ in true }
+        XCTAssertEqual(items?.count, 0)
+        do {
+            try await state.signIn(email: "gone@example.com", password: "secret1")
+            XCTFail("Expected invalidCredentials")
+        } catch {
+            XCTAssertEqual(error as? AuthError, .invalidCredentials)
+        }
     }
 
     @MainActor

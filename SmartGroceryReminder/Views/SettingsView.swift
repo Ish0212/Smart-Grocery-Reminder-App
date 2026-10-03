@@ -4,6 +4,11 @@ struct SettingsView: View {
     @EnvironmentObject private var appState: AppState
     @EnvironmentObject private var notificationService: NotificationService
 
+    @State private var isConfirmingDeletion = false
+    @State private var deletionPassword = ""
+    @State private var isDeletingAccount = false
+    @State private var deletionError: String?
+
     var body: some View {
         NavigationStack {
             Form {
@@ -12,9 +17,30 @@ struct SettingsView: View {
                         LabeledContent("Name", value: user.displayName)
                         LabeledContent("Email", value: user.email)
                     }
-                    LabeledContent("Backend", value: appState.useMockBackend ? "Mock (prototype)" : "Firebase")
+                    if appState.showsTestTools {
+                        LabeledContent("Backend", value: appState.useMockBackend ? "Mock (prototype)" : "Firebase")
+                    }
                     Button("Sign Out", role: .destructive) {
                         appState.signOut()
+                    }
+                    .disabled(isDeletingAccount)
+                    Button("Delete Account", role: .destructive) {
+                        deletionPassword = ""
+                        deletionError = nil
+                        isConfirmingDeletion = true
+                    }
+                    .disabled(isDeletingAccount)
+                    if isDeletingAccount {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                            Text("Deleting your account…")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    if let deletionError {
+                        Text(deletionError)
+                            .font(.footnote)
+                            .foregroundStyle(.red)
                     }
                 }
 
@@ -56,12 +82,23 @@ struct SettingsView: View {
                 }
 
                 Section("About") {
-                    Text("Prototype for location-aware grocery lists, home-arrival unload timers, and Firebase-ready sync.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+                    LabeledContent("Version", value: Self.version)
+                    if let privacyPolicy = AppLinks.privacyPolicy {
+                        Link("Privacy Policy", destination: privacyPolicy)
+                    }
+                    if let support = AppLinks.support {
+                        Link("Support", destination: support)
+                    }
                 }
             }
             .navigationTitle("Settings")
+            .alert("Delete your account?", isPresented: $isConfirmingDeletion) {
+                SecureField("Password", text: $deletionPassword)
+                Button("Delete", role: .destructive, action: deleteAccount)
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text(deletionWarning)
+            }
             .task {
                 await notificationService.refreshAuthorizationStatus()
                 // Reminders delivered since the count was last read are no longer pending.
@@ -71,6 +108,42 @@ struct SettingsView: View {
                 Task { await appState.savePreferences() }
             }
         }
+    }
+
+    private var deletionWarning: String {
+        let userId = appState.currentUser?.id
+        let onOwnList = appState.activeListId == nil || appState.activeListId == userId
+        var warning = "This permanently deletes your account, your list, saved places and settings."
+        if !onOwnList {
+            warning += " You'll leave the list you joined; its owner keeps it."
+        } else if appState.sharedList?.isShared == true {
+            warning += " The people you share your list with will lose it too."
+        }
+        return warning + " Enter your password to confirm."
+    }
+
+    private func deleteAccount() {
+        let password = deletionPassword
+        deletionPassword = ""
+        deletionError = nil
+        isDeletingAccount = true
+        Task {
+            do {
+                // On success the app returns to the sign-in screen.
+                try await appState.deleteAccount(password: password)
+            } catch {
+                deletionError = "Couldn't delete your account: \(error.localizedDescription)"
+            }
+            isDeletingAccount = false
+        }
+    }
+
+    /// e.g. "1.0 (12)": the marketing version and the build number.
+    private static var version: String {
+        let info = Bundle.main.infoDictionary
+        let marketing = info?["CFBundleShortVersionString"] as? String ?? "?"
+        let build = info?["CFBundleVersion"] as? String ?? "?"
+        return "\(marketing) (\(build))"
     }
 
     private var reminderDateBinding: Binding<Date> {
