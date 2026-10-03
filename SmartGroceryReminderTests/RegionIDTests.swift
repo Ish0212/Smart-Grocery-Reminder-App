@@ -1,5 +1,6 @@
 import XCTest
 import Combine
+import CoreLocation
 @testable import SmartGroceryReminder
 
 final class RegionIDTests: XCTestCase {
@@ -37,7 +38,7 @@ final class RegionIDTests: XCTestCase {
     @MainActor
     func testRegionTransitionIsPublishedAndLogged() {
         let diagnostics = DiagnosticsLog()
-        let service = LocationService(diagnostics: diagnostics)
+        let service = LocationService(diagnostics: diagnostics, manager: nil)
         var received: [LocationEvent] = []
         let subscription = service.events.sink { received.append($0) }
         defer { subscription.cancel() }
@@ -53,7 +54,7 @@ final class RegionIDTests: XCTestCase {
     @MainActor
     func testUnrecognizedRegionIsLoggedButNotPublished() {
         let diagnostics = DiagnosticsLog()
-        let service = LocationService(diagnostics: diagnostics)
+        let service = LocationService(diagnostics: diagnostics, manager: nil)
         var received: [LocationEvent] = []
         let subscription = service.events.sink { received.append($0) }
         defer { subscription.cancel() }
@@ -62,5 +63,31 @@ final class RegionIDTests: XCTestCase {
 
         XCTAssertTrue(received.isEmpty)
         XCTAssertEqual(diagnostics.entries.last?.kind, .regionUnknown)
+    }
+
+    @MainActor
+    func testInertServiceRecordsTheRegionsItWouldMonitor() throws {
+        let service = LocationService(diagnostics: DiagnosticsLog(), manager: nil)
+        let home = GeoPlace(id: "h", name: "Home", latitude: 1, longitude: 2, radiusMeters: 120, kind: .home)
+        let store = GeoPlace(id: "s", name: "Shop", latitude: 3, longitude: 4, kind: .groceryStore)
+        XCTAssertTrue(service.isInert)
+
+        service.startMonitoring(home: home, stores: [store])
+
+        XCTAssertEqual(Set(service.monitoredForTesting.keys), ["home:h", "groceryStore:s"])
+        let homeRegion = try XCTUnwrap(service.monitoredForTesting["home:h"])
+        XCTAssertEqual(homeRegion.radius, 120)
+        XCTAssertTrue(homeRegion.notifyOnExit)
+        let storeRegion = try XCTUnwrap(service.monitoredForTesting["groceryStore:s"])
+        XCTAssertFalse(storeRegion.notifyOnExit)
+        XCTAssertEqual(service.systemRegionCount, 2)
+
+        service.startMonitoring(home: home, stores: [])
+        XCTAssertEqual(Set(service.monitoredForTesting.keys), ["home:h"])
+
+        service.stopMonitoring()
+        XCTAssertTrue(service.monitoredForTesting.isEmpty)
+        XCTAssertEqual(service.systemRegionCount, 0)
+        XCTAssertEqual(service.authorizationStatus, .notDetermined)
     }
 }

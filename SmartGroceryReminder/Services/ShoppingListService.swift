@@ -40,7 +40,7 @@ actor MockShoppingListService: ShoppingListServiceProtocol {
     private let now: @Sendable () -> Date
     /// False when a saved file exists but couldn't be read, so it is never overwritten.
     private let canSave: Bool
-    private var itemObservers: [(listId: String, continuation: AsyncThrowingStream<[GroceryItem], Error>.Continuation)] = []
+    private var itemObservers: [(listId: String, readerId: String, continuation: AsyncThrowingStream<[GroceryItem], Error>.Continuation)] = []
     private var preferenceObservers: [(userId: String, continuation: AsyncThrowingStream<UserPreferences, Error>.Continuation)] = []
     private var activeListObservers: [(userId: String, continuation: AsyncThrowingStream<String, Error>.Continuation)] = []
 
@@ -86,8 +86,9 @@ actor MockShoppingListService: ShoppingListServiceProtocol {
         return code
     }
 
-    func joinList(code: String, userId: String) throws {
-        guard let invite = invites[InviteCode.normalize(code)], var list = lists[invite.listId] else {
+    func joinList(code rawCode: String, userId: String) throws {
+        let code = InviteCode.normalize(rawCode)
+        guard code.count == InviteCode.length, let invite = invites[code], var list = lists[invite.listId] else {
             throw SharedListError.invalidCode
         }
         guard invite.expiresAt > now() else { throw SharedListError.expiredCode }
@@ -102,8 +103,27 @@ actor MockShoppingListService: ShoppingListServiceProtocol {
     func leaveList(userId: String) throws {
         let listId = activeListId(for: userId)
         guard listId != userId else { throw SharedListError.cannotLeaveOwnList }
+        // Does nothing for someone the owner already removed.
         lists[listId]?.memberIds.removeAll { $0 == userId }
         setActiveList(userId, for: userId)
+    }
+
+    /// The owner takes someone off their list (the rules allow it; the app has no button for it
+    /// yet). Like Firestore, that member's item listener is then denied.
+    func removeMember(_ userId: String, fromList listId: String) {
+        guard userId != listId else { return }
+        lists[listId]?.memberIds.removeAll { $0 == userId }
+        persist()
+        itemObservers.removeAll { observer in
+            guard observer.listId == listId, observer.readerId == userId else { return false }
+            observer.continuation.finish(throwing: SharedListError.removedFromList)
+            return true
+        }
+    }
+
+    /// Like the rules: the owner and the members may read a list.
+    private func canRead(_ listId: String, _ userId: String) -> Bool {
+        listId == userId || lists[listId]?.memberIds.contains(userId) == true
     }
 
     private func activeListId(for userId: String) -> String {
@@ -126,9 +146,13 @@ actor MockShoppingListService: ShoppingListServiceProtocol {
 
     // MARK: - Items
 
-    func observeItems(listId: String) -> AsyncThrowingStream<[GroceryItem], Error> {
+    func observeItems(listId: String, userId: String) -> AsyncThrowingStream<[GroceryItem], Error> {
         let (stream, continuation) = AsyncThrowingStream<[GroceryItem], Error>.makeStream(bufferingPolicy: .bufferingNewest(1))
-        itemObservers.append((listId, continuation))
+        guard canRead(listId, userId) else {
+            continuation.finish(throwing: SharedListError.removedFromList)
+            return stream
+        }
+        itemObservers.append((listId, userId, continuation))
         continuation.yield(itemsByList[listId] ?? [])
         return stream
     }
@@ -141,6 +165,14 @@ actor MockShoppingListService: ShoppingListServiceProtocol {
             items.insert(item, at: 0)
         }
         itemsByList[listId] = items
+        persist()
+        publishItems(for: listId)
+    }
+
+    func update(item: GroceryItem, listId: String) async throws {
+        // Like Firestore's updateData, a deleted item stays deleted.
+        guard let index = itemsByList[listId]?.firstIndex(where: { $0.id == item.id }) else { return }
+        itemsByList[listId]?[index] = item
         persist()
         publishItems(for: listId)
     }
@@ -189,7 +221,8 @@ actor MockShoppingListService: ShoppingListServiceProtocol {
 }
 
 /// Firestore storage:
-/// - `users/{uid}`: `activeListId`, plus `preferences/main` (and legacy `items/*`, migrated once);
+/// - `users/{uid}`: `activeListId` and, after joining someone's list, the `joinCode` used (the rules' proof
+///   of invite), plus `preferences/main` (and legacy `items/*`, migrated once);
 /// - `lists/{listId}`: `ownerId`, `memberIds`, with the shared `items/{itemId}` (a list's ID is its owner's uid);
 /// - `invites/{code}`: `listId`, `createdBy`, `expiresAt`.
 /// Reads come from snapshot listeners, which serve the local cache first (also offline) and then live updates.
@@ -248,17 +281,69 @@ final class FirestoreShoppingListService: ShoppingListServiceProtocol {
 
     /// In one batch: create `lists/{uid}`, copy the legacy `users/{uid}/items` into it, and set
     /// `activeListId`. Because it's atomic, a missing `activeListId` means the list doesn't exist yet.
-    /// The legacy items are left in place.
+    /// The legacy items are left in place. They're read from the server, since a partial cache would
+    /// lose the rest, and each is cleaned up to pass the rules (see `migratableItem`): one item saved
+    /// before the rules checked it must not fail the whole batch, every launch.
     private func createOwnList(userId: String) async throws {
-        let legacy = try await userDocument(userId).collection("items").getDocuments()
+        let legacy = try await userDocument(userId).collection("items").getDocuments(source: .server)
+        let items = legacy.documents.compactMap { document in
+            Self.migratableItem(document.data(), documentID: document.documentID, userId: userId)
+                .map { (id: document.documentID, data: $0) }
+        }
         let batch = db.batch()
         batch.setData(["ownerId": userId, "memberIds": [userId]], forDocument: listDocument(userId))
         // A batch holds at most 500 writes; a personal grocery list is far below that.
-        for item in legacy.documents.prefix(490) {
-            batch.setData(item.data(), forDocument: itemsCollection(userId).document(item.documentID))
+        for item in items.prefix(490) {
+            batch.setData(item.data, forDocument: itemsCollection(userId).document(item.id))
         }
         batch.setData(["activeListId": userId], forDocument: userDocument(userId), merge: true)
         try await batch.commit()
+    }
+
+    /// A legacy item as the rules' `isValidItem` and `isHonestCompletedBy` accept it on create, or nil
+    /// if it can't be made to pass: unknown fields are dropped, over-long text is cut to the limit,
+    /// and a completedBy naming someone else is dropped. The rules measure text in UTF-16 units.
+    static func migratableItem(
+        _ data: [String: Any],
+        documentID: String,
+        userId: String,
+        isTimestamp: (Any) -> Bool = { $0 is Timestamp }
+    ) -> [String: Any]? {
+        guard data["id"] as? String == documentID,
+              let title = (data["title"] as? String).map({ trimmed($0, toUTF16: 500) }), !title.isEmpty,
+              let isCompleted = data["isCompleted"], CFGetTypeID(isCompleted as CFTypeRef) == CFBooleanGetTypeID(),
+              let createdAt = data["createdAt"], isTimestamp(createdAt),
+              let updatedAt = data["updatedAt"], isTimestamp(updatedAt) else { return nil }
+        var item: [String: Any] = [
+            "id": documentID,
+            "title": title,
+            "isCompleted": isCompleted,
+            "createdAt": createdAt,
+            "updatedAt": updatedAt,
+        ]
+        for (key, limit) in [("notes", 2000), ("aisle", 200)] {
+            guard let value = data[key] else { continue }
+            guard let text = value as? String else { return nil }
+            item[key] = trimmed(text, toUTF16: limit)
+        }
+        if data["completedBy"] as? String == userId {
+            item["completedBy"] = userId
+        }
+        return item
+    }
+
+    /// The longest run of whole Unicode scalars from the start that fits in `limit` UTF-16 units.
+    private static func trimmed(_ text: String, toUTF16 limit: Int) -> String {
+        guard text.utf16.count > limit else { return text }
+        var scalars = String.UnicodeScalarView()
+        var length = 0
+        for scalar in text.unicodeScalars {
+            let width = scalar.value > 0xFFFF ? 2 : 1
+            guard length + width <= limit else { break }
+            scalars.append(scalar)
+            length += width
+        }
+        return String(scalars)
     }
 
     func listInfo(listId: String) async throws -> SharedListInfo {
@@ -280,56 +365,68 @@ final class FirestoreShoppingListService: ShoppingListServiceProtocol {
 
     func joinList(code rawCode: String, userId: String) async throws {
         let code = InviteCode.normalize(rawCode)
-        guard !code.isEmpty else { throw SharedListError.invalidCode }
+        guard code.count == InviteCode.length else { throw SharedListError.invalidCode }
         let invite = try await db.collection("invites").document(code).getDocument()
         guard let listId = invite.get("listId") as? String,
               let expiresAt = invite.get("expiresAt") as? Timestamp else { throw SharedListError.invalidCode }
         guard expiresAt.dateValue() > Date() else { throw SharedListError.expiredCode }
 
-        if listId != userId, !(try await isMember(of: listId)) {
-            do {
-                // The rules check `joinCode` against the invite and allow adding only yourself.
-                try await listDocument(listId).updateData([
-                    "memberIds": FieldValue.arrayUnion([userId]),
-                    "joinCode": code,
-                ])
-            } catch let error as FirestoreErrorCode where error.code == .permissionDenied {
-                // The invite checked out, so a denial here means the list is full.
-                throw SharedListError.listFull
-            }
+        guard listId != userId, !(await isMember(userId, of: listId)) else {
+            // Your own list, or one you're already on: just switch to it.
+            try await userDocument(userId).setData(["activeListId": listId], merge: true)
+            return
         }
-        try await userDocument(userId).setData(["activeListId": listId], merge: true)
-    }
-
-    /// Non-members can't read a list, so a denied read means "not a member".
-    private func isMember(of listId: String) async throws -> Bool {
+        // One batch: the rules allow adding only yourself, and check the `joinCode` in your own
+        // user document (as it will be after this batch) against the invite.
+        let batch = db.batch()
+        batch.updateData(["memberIds": FieldValue.arrayUnion([userId])], forDocument: listDocument(listId))
+        batch.setData(["activeListId": listId, "joinCode": code], forDocument: userDocument(userId), merge: true)
         do {
-            _ = try await listDocument(listId).getDocument()
-            return true
+            try await batch.commit()
         } catch let error as FirestoreErrorCode where error.code == .permissionDenied {
-            return false
+            // The invite checked out, so a denial here means the list is full.
+            throw SharedListError.listFull
         }
     }
 
+    /// Asks the server, since a cached copy may predate being removed. Non-members can't read a
+    /// list, so a denied read means "not a member". Any other failure (offline) also answers no,
+    /// and the join write then decides.
+    private func isMember(_ userId: String, of listId: String) async -> Bool {
+        guard let snapshot = try? await listDocument(listId).getDocument(source: .server),
+              let memberIds = snapshot.get("memberIds") as? [String] else { return false }
+        return memberIds.contains(userId)
+    }
+
+    /// Switches back first, then leaves: someone the owner already removed can't take themselves off
+    /// the list (the rules deny it), and must still get back to their own list.
     func leaveList(userId: String) async throws {
         let userSnapshot = try await userDocument(userId).getDocument()
         let listId = userSnapshot.get("activeListId") as? String ?? userId
         guard listId != userId else { throw SharedListError.cannotLeaveOwnList }
-        let batch = db.batch()
-        batch.updateData(["memberIds": FieldValue.arrayRemove([userId])], forDocument: listDocument(listId))
-        batch.setData(["activeListId": userId], forDocument: userDocument(userId), merge: true)
-        try await batch.commit()
+        // Clearing the invite code means coming back takes a code again.
+        try await userDocument(userId).setData(["activeListId": userId, "joinCode": FieldValue.delete()], merge: true)
+        do {
+            try await listDocument(listId).updateData(["memberIds": FieldValue.arrayRemove([userId])])
+        } catch let error as FirestoreErrorCode where error.code == .permissionDenied || error.code == .notFound {
+            // Already removed, or the list is gone.
+        }
     }
 
     // MARK: - Items
 
-    func observeItems(listId: String) -> AsyncThrowingStream<[GroceryItem], Error> {
+    /// The rules decide who may read, so `userId` isn't needed here.
+    func observeItems(listId: String, userId: String) -> AsyncThrowingStream<[GroceryItem], Error> {
         // Newest first, matching the mock's insert-at-front order.
         let query = itemsCollection(listId).order(by: "createdAt", descending: true)
         return AsyncThrowingStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
             let registration = query.addSnapshotListener { snapshot, error in
                 if let error {
-                    continuation.finish(throwing: error)
+                    if let firestoreError = error as? FirestoreErrorCode, firestoreError.code == .permissionDenied {
+                        continuation.finish(throwing: SharedListError.removedFromList)
+                    } else {
+                        continuation.finish(throwing: error)
+                    }
                     return
                 }
                 guard let snapshot else { return }
@@ -342,6 +439,22 @@ final class FirestoreShoppingListService: ShoppingListServiceProtocol {
 
     func upsert(item: GroceryItem, listId: String) async throws {
         try itemsCollection(listId).document(item.id).setData(from: item)
+    }
+
+    /// `updateData` fails on a deleted document instead of creating it. Like `setData(from:)` it
+    /// doesn't wait for the server; a rejected update is rolled back in the local cache.
+    func update(item: GroceryItem, listId: String) async throws {
+        var fields = try Firestore.Encoder().encode(item)
+        // The encoder leaves out a nil completedBy, which would keep the stored one.
+        if item.completedBy == nil {
+            fields["completedBy"] = FieldValue.delete()
+        }
+        updateWithoutWaiting(itemsCollection(listId).document(item.id), fields)
+    }
+
+    /// Outside an async function, `updateData` resolves to the call that doesn't wait for the server.
+    private func updateWithoutWaiting(_ document: DocumentReference, _ fields: [String: Any]) {
+        document.updateData(fields)
     }
 
     func delete(itemId: String, listId: String) async throws {

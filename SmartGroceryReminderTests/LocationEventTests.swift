@@ -1,4 +1,5 @@
 import XCTest
+import UserNotifications
 @testable import SmartGroceryReminder
 
 @MainActor
@@ -30,6 +31,48 @@ final class LocationEventTests: XCTestCase {
         LocationEvent(kind: kind, transition: transition, placeId: "p", date: now.addingTimeInterval(-secondsAgo))
     }
 
+    /// A real visit to a saved store half an hour ago: evidence of a shopping trip.
+    private var storeVisit: Date { now.addingTimeInterval(-30 * 60) }
+    private var afterShopping: AppState.ReminderContext { .init(lastStoreVisit: storeVisit) }
+
+    private let home = GeoPlace(id: "test-home", name: "Home", latitude: 40.7, longitude: -74.0, kind: .home)
+    private let store = GeoPlace(id: "test-store", name: "Market", latitude: 40.71, longitude: -74.01, kind: .groceryStore)
+
+    /// Saved places with known ids, so real events for them are handled. The daily reminder is
+    /// off, so the session doesn't schedule one next to the requests a test checks.
+    private var sessionPreferences: UserPreferences {
+        var prefs = UserPreferences.default
+        prefs.homeLocation = home
+        prefs.savedStores = [store]
+        prefs.dailyListReminderEnabled = false
+        return prefs
+    }
+
+    /// A signed-in session whose preferences and list have loaded.
+    @MainActor
+    private func loadedSession(
+        preferences: UserPreferences? = nil,
+        items: [GroceryItem] = [],
+        stateDirectory: URL? = nil,
+        widgetStore: WidgetSnapshotStore? = nil
+    ) async throws -> AppState {
+        let state = AppState.forTesting(stateDirectory: stateDirectory, widgetStore: widgetStore)
+        let user = AppUser(id: "session-user", email: "s@b.c", displayName: "S")
+        try await state.listService.savePreferences(preferences ?? sessionPreferences, userId: user.id)
+        for item in items {
+            try await state.listService.upsert(item: item, listId: user.id)
+        }
+        state.currentUser = user
+        state.isAuthenticated = true
+        state.startSync(for: user)
+        try await waitUntil { state.sessionDataLoaded && state.shoppingList.count == items.count }
+        return state
+    }
+
+    private func enter(_ place: GeoPlace) -> LocationEvent {
+        LocationEvent(kind: place.kind, transition: .enter, placeId: place.id, date: Date())
+    }
+
     // MARK: - Decisions
 
     @MainActor
@@ -44,13 +87,104 @@ final class LocationEventTests: XCTestCase {
         XCTAssertEqual(itemCount, 2)
     }
 
+    // MARK: - Shopping trip
+
+    /// Unload, then walk the dog: the unchecked items are still on the list, but nothing was bought.
+    @MainActor
+    func testWalkingTheDogWithUncheckedItemsDoesNotRemind() {
+        let decision = AppState.decision(
+            for: event(), preferences: .default, items: items, now: now,
+            context: .init(
+                lastHandled: now.addingTimeInterval(-60 * 60),
+                lastUnloadDone: now.addingTimeInterval(-45 * 60),
+                lastStoreVisit: now.addingTimeInterval(-90 * 60)
+            )
+        )
+        XCTAssertEqual(decision, .ignore(reason: AppState.noShoppingTripReason))
+    }
+
+    @MainActor
+    func testCommuteWithOpenItemsAndNoStoreVisitDoesNotRemind() {
+        let open = [GroceryItem(title: "Milk"), GroceryItem(title: "Bread")]
+        let decision = AppState.decision(for: event(), preferences: .default, items: open, now: now)
+        XCTAssertEqual(decision, .ignore(reason: AppState.noShoppingTripReason))
+        XCTAssertTrue(AppState.noShoppingTripReason.contains("check off what you bought, or visit a saved store"))
+    }
+
+    @MainActor
+    func testStoreVisitWithUncheckedItemsReminds() {
+        let open = [
+            GroceryItem(title: "Milk"),
+            GroceryItem(title: "Bread"),
+            GroceryItem(title: "Old", isCompleted: true, updatedAt: now.addingTimeInterval(-24 * 60 * 60)),
+        ]
+        guard case .scheduleUnload(_, let itemCount, _, _) = AppState.decision(
+            for: event(), preferences: .default, items: open, now: now, context: afterShopping
+        ) else { return XCTFail("Expected scheduleUnload") }
+        XCTAssertEqual(itemCount, 2)
+    }
+
+    @MainActor
+    func testStoreVisitWithNothingOnTheListRemindsAboutYourGroceries() {
+        guard case .scheduleUnload(_, let itemCount, _, _) = AppState.decision(
+            for: event(), preferences: .default, items: [], now: now, context: afterShopping
+        ) else { return XCTFail("Expected scheduleUnload") }
+        XCTAssertEqual(itemCount, 0)
+
+        let content = NotificationService.carUnloadContent(itemCount: 0, isRepeat: false, repeatInterval: 300, scheduledAt: now)
+        XCTAssertEqual(content.body, "Don't forget to bring your groceries inside.")
+        XCTAssertEqual(content.userInfo[NotificationUserInfo.itemCount] as? Int, 0)
+    }
+
+    @MainActor
+    func testAStoreVisitCountsForThreeHours() {
+        let open = [GroceryItem(title: "Milk")]
+        guard case .scheduleUnload = AppState.decision(
+            for: event(), preferences: .default, items: open, now: now,
+            context: .init(lastStoreVisit: now.addingTimeInterval(-AppState.recentPurchaseWindow))
+        ) else { return XCTFail("Expected scheduleUnload") }
+
+        XCTAssertEqual(
+            AppState.decision(
+                for: event(), preferences: .default, items: open, now: now,
+                context: .init(lastStoreVisit: now.addingTimeInterval(-AppState.recentPurchaseWindow - 1))
+            ),
+            .ignore(reason: AppState.noShoppingTripReason)
+        )
+    }
+
+    @MainActor
+    func testAStoreVisitBeforeTheLastUnloadDoesNotCount() {
+        let decision = AppState.decision(
+            for: event(), preferences: .default, items: items, now: now,
+            context: .init(lastUnloadDone: now.addingTimeInterval(-20 * 60), lastStoreVisit: now.addingTimeInterval(-40 * 60))
+        )
+        XCTAssertEqual(decision, .ignore(reason: AppState.noShoppingTripReason))
+    }
+
+    /// Demos and the field test's "Simulate arrive home" still remind about the unchecked items.
+    @MainActor
+    func testSimulatedArrivalFallsBackToUncheckedItems() {
+        var simulated = event()
+        simulated.isSimulated = true
+        guard case .scheduleUnload(_, let itemCount, _, _) = AppState.decision(
+            for: simulated, preferences: .default, items: items, now: now
+        ) else { return XCTFail("Expected scheduleUnload") }
+        XCTAssertEqual(itemCount, 1)
+
+        guard case .ignore(let reason) = AppState.decision(
+            for: simulated, preferences: .default, items: [], now: now
+        ) else { return XCTFail("Expected ignore") }
+        XCTAssertEqual(reason, "nothing bought recently and no unchecked items")
+    }
+
     // MARK: - Flapping cooldown
 
     @MainActor
     func testHomeEnterInsideTheCooldownIsIgnored() {
         let decision = AppState.decision(
             for: event(), preferences: .default, items: items, now: now,
-            lastHandled: now.addingTimeInterval(-5 * 60)
+            context: .init(lastHandled: now.addingTimeInterval(-5 * 60))
         )
         guard case .ignore(let reason) = decision else { return XCTFail("Expected ignore") }
         XCTAssertTrue(reason.contains("already handled"), reason)
@@ -60,7 +194,7 @@ final class LocationEventTests: XCTestCase {
     func testHomeEnterAfterTheCooldownSchedules() {
         let decision = AppState.decision(
             for: event(), preferences: .default, items: items, now: now,
-            lastHandled: now.addingTimeInterval(-AppState.cooldown(for: .home))
+            context: .init(lastHandled: now.addingTimeInterval(-AppState.cooldown(for: .home)), lastStoreVisit: storeVisit)
         )
         guard case .scheduleUnload = decision else { return XCTFail("Expected scheduleUnload") }
     }
@@ -69,10 +203,11 @@ final class LocationEventTests: XCTestCase {
     func testStoreCooldownIsLongerThanHome() {
         let twentyMinutesAgo = now.addingTimeInterval(-20 * 60)
         guard case .ignore = AppState.decision(
-            for: event(.groceryStore), preferences: .default, items: items, now: now, lastHandled: twentyMinutesAgo
+            for: event(.groceryStore), preferences: .default, items: items, now: now, context: .init(lastHandled: twentyMinutesAgo)
         ) else { return XCTFail("Expected the store enter to be ignored") }
         guard case .scheduleUnload = AppState.decision(
-            for: event(.home), preferences: .default, items: items, now: now, lastHandled: twentyMinutesAgo
+            for: event(.home), preferences: .default, items: items, now: now,
+            context: .init(lastHandled: twentyMinutesAgo, lastStoreVisit: storeVisit)
         ) else { return XCTFail("Expected the home enter to schedule") }
     }
 
@@ -85,13 +220,13 @@ final class LocationEventTests: XCTestCase {
 
         guard case .ignore = AppState.decision(
             for: event(), preferences: .default, items: boughtBeforeDone, now: now,
-            lastHandled: arrival, lastUnloadDone: done
+            context: .init(lastHandled: arrival, lastUnloadDone: done)
         ) else { return XCTFail("Expected ignore") }
 
         let boughtAfterDone = boughtBeforeDone + [GroceryItem(title: "Bread", isCompleted: true, updatedAt: done.addingTimeInterval(20 * 60))]
         guard case .scheduleUnload(_, let itemCount, _, _) = AppState.decision(
             for: event(), preferences: .default, items: boughtAfterDone, now: now,
-            lastHandled: arrival, lastUnloadDone: done
+            context: .init(lastHandled: arrival, lastUnloadDone: done)
         ) else { return XCTFail("Expected scheduleUnload") }
         XCTAssertEqual(itemCount, 1)
     }
@@ -100,7 +235,7 @@ final class LocationEventTests: XCTestCase {
     func testUnloadDoneStartsTheHomeCooldown() {
         guard case .ignore = AppState.decision(
             for: event(), preferences: .default, items: items, now: now,
-            lastHandled: now.addingTimeInterval(-60 * 60), lastUnloadDone: now.addingTimeInterval(-5 * 60)
+            context: .init(lastHandled: now.addingTimeInterval(-60 * 60), lastUnloadDone: now.addingTimeInterval(-5 * 60))
         ) else { return XCTFail("Expected ignore") }
     }
 
@@ -108,7 +243,7 @@ final class LocationEventTests: XCTestCase {
     func testUnloadDoneDoesNotAffectStores() {
         guard case .notifyStore = AppState.decision(
             for: event(.groceryStore), preferences: .default, items: items, now: now,
-            lastUnloadDone: now.addingTimeInterval(-60)
+            context: .init(lastUnloadDone: now.addingTimeInterval(-60))
         ) else { return XCTFail("Expected notifyStore") }
     }
 
@@ -117,7 +252,7 @@ final class LocationEventTests: XCTestCase {
         var simulated = event()
         simulated.isSimulated = true
         guard case .scheduleUnload = AppState.decision(
-            for: simulated, preferences: .default, items: items, now: now, lastHandled: now.addingTimeInterval(-60)
+            for: simulated, preferences: .default, items: items, now: now, context: .init(lastHandled: now.addingTimeInterval(-60))
         ) else { return XCTFail("Expected scheduleUnload") }
     }
 
@@ -125,7 +260,7 @@ final class LocationEventTests: XCTestCase {
     func testArrivalOlderThanTheLastHandledTimeIsIgnored() {
         // e.g. a queued arrival from before "All brought in" was tapped.
         guard case .ignore = AppState.decision(
-            for: event(secondsAgo: 120), preferences: .default, items: items, now: now, lastHandled: now
+            for: event(secondsAgo: 120), preferences: .default, items: items, now: now, context: .init(lastHandled: now)
         ) else { return XCTFail("Expected ignore") }
     }
 
@@ -134,7 +269,7 @@ final class LocationEventTests: XCTestCase {
         var prefs = UserPreferences.default
         prefs.homeArrivalDelay = 600
 
-        let decision = AppState.decision(for: event(), preferences: prefs, items: items, now: now)
+        let decision = AppState.decision(for: event(), preferences: prefs, items: items, now: now, context: afterShopping)
 
         XCTAssertEqual(decision, .scheduleUnload(
             delay: 600,
@@ -149,11 +284,11 @@ final class LocationEventTests: XCTestCase {
         var prefs = UserPreferences.default
         prefs.homeArrivalDelay = 600
 
-        let late = AppState.decision(for: event(secondsAgo: 240), preferences: prefs, items: items, now: now)
+        let late = AppState.decision(for: event(secondsAgo: 240), preferences: prefs, items: items, now: now, context: afterShopping)
         guard case .scheduleUnload(let delay, _, _, _) = late else { return XCTFail("Expected scheduleUnload") }
         XCTAssertEqual(delay, 360)
 
-        let veryLate = AppState.decision(for: event(secondsAgo: 599), preferences: prefs, items: items, now: now)
+        let veryLate = AppState.decision(for: event(secondsAgo: 599), preferences: prefs, items: items, now: now, context: afterShopping)
         guard case .scheduleUnload(let floored, _, _, _) = veryLate else { return XCTFail("Expected scheduleUnload") }
         XCTAssertEqual(floored, 5)
     }
@@ -207,12 +342,14 @@ final class LocationEventTests: XCTestCase {
 
     @MainActor
     func testArrivalBeforeTheListLoadsIsHandledOnceItDoes() async throws {
-        let state = AppState()
+        let state = AppState.forTesting()
         let user = AppUser(id: "queued-user", email: "q@b.c", displayName: "Q")
-        try await state.listService.upsert(item: GroceryItem(title: "Milk"), listId: user.id)
+        try await state.listService.savePreferences(sessionPreferences, userId: user.id)
+        // Checked off on the way home: evidence of a shopping trip.
+        try await state.listService.upsert(item: GroceryItem(title: "Milk", isCompleted: true, completedBy: user.id), listId: user.id)
         state.currentUser = user
 
-        state.handleLocationEvent(LocationEvent(kind: .home, transition: .enter, placeId: "default-home", date: Date()))
+        state.handleLocationEvent(enter(home))
         XCTAssertEqual(state.pendingLocationEvents.count, 1)
         XCTAssertFalse(state.homeArrivalTimer.isActive)
 
@@ -223,10 +360,127 @@ final class LocationEventTests: XCTestCase {
         state.signOut()
     }
 
+    /// Store reminders are off, so the visit sends nothing, but it still counts as a shopping trip.
+    @MainActor
+    func testARealStoreVisitMakesTheNextHomeArrivalRemind() async throws {
+        var prefs = sessionPreferences
+        prefs.storeEntryReminderEnabled = false
+        let state = try await loadedSession(preferences: prefs, items: [GroceryItem(title: "Milk")])
+
+        state.handleLocationEvent(enter(home))
+        try await waitUntil {
+            state.diagnostics.entries.contains { $0.kind == .skipped && $0.message.contains(AppState.noShoppingTripReason) }
+        }
+        XCTAssertFalse(state.homeArrivalTimer.isActive)
+        XCTAssertNil(state.lastStoreVisit)
+
+        state.handleLocationEvent(enter(store))
+        XCTAssertNotNil(state.lastStoreVisit)
+
+        state.handleLocationEvent(enter(home))
+        try await waitUntil { state.homeArrivalTimer.isActive }
+        try await waitUntil { state.diagnostics.entries.contains { $0.kind == .unloadScheduled } }
+        let reminder = try XCTUnwrap(state.notificationService.scheduledForTesting.first { $0.identifier == NotificationID.carUnload })
+        XCTAssertEqual(reminder.content.userInfo[NotificationUserInfo.itemCount] as? Int, 1)
+        XCTAssertFalse(state.notificationService.scheduledForTesting.contains { $0.identifier == NotificationID.storeVisit })
+        state.signOut()
+    }
+
+    @MainActor
+    func testSimulatedStoreVisitsAreNotRemembered() async throws {
+        let state = try await loadedSession()
+        state.locationService.simulateEnterStore()
+        XCTAssertNil(state.lastStoreVisit)
+        state.signOut()
+    }
+
+    // MARK: - Saved places
+
+    @MainActor
+    func testOnlyEventsForSavedPlacesCount() {
+        let prefs = sessionPreferences
+        XCTAssertTrue(AppState.isSaved(enter(home), in: prefs))
+        XCTAssertTrue(AppState.isSaved(enter(store), in: prefs))
+        XCTAssertFalse(AppState.isSaved(LocationEvent(kind: .home, transition: .enter, placeId: "old-home", date: now), in: prefs))
+        XCTAssertFalse(AppState.isSaved(LocationEvent(kind: .groceryStore, transition: .enter, placeId: "deleted-store", date: now), in: prefs))
+        // A store id isn't a home, and a missing home matches nothing.
+        XCTAssertFalse(AppState.isSaved(LocationEvent(kind: .home, transition: .enter, placeId: store.id, date: now), in: prefs))
+        var noHome = prefs
+        noHome.homeLocation = nil
+        XCTAssertFalse(AppState.isSaved(enter(home), in: noHome))
+    }
+
+    /// Queued before the preferences loaded, for a home that has since been replaced.
+    @MainActor
+    func testQueuedArrivalAtAnOldHomeIsDropped() async throws {
+        let state = AppState.forTesting()
+        let user = AppUser(id: "moved-user", email: "m@b.c", displayName: "M")
+        try await state.listService.savePreferences(sessionPreferences, userId: user.id)
+        try await state.listService.upsert(item: GroceryItem(title: "Milk", isCompleted: true, completedBy: user.id), listId: user.id)
+        state.currentUser = user
+
+        state.handleLocationEvent(LocationEvent(kind: .home, transition: .enter, placeId: "old-home", date: Date()))
+        XCTAssertEqual(state.pendingLocationEvents.count, 1)
+
+        state.startSync(for: user)
+        try await waitUntil {
+            state.diagnostics.entries.contains { $0.kind == .dropped && $0.message.contains("place no longer saved") && $0.placeId == "old-home" }
+        }
+        XCTAssertTrue(state.pendingLocationEvents.isEmpty)
+        XCTAssertFalse(state.homeArrivalTimer.isActive)
+        XCTAssertTrue(state.notificationService.scheduledForTesting.isEmpty)
+        state.signOut()
+    }
+
+    @MainActor
+    func testADeletedStoreIsNotAShoppingTrip() async throws {
+        let state = try await loadedSession(items: [GroceryItem(title: "Milk")])
+
+        state.handleLocationEvent(LocationEvent(kind: .groceryStore, transition: .enter, placeId: "deleted-store", date: Date()))
+
+        XCTAssertNil(state.lastStoreVisit)
+        XCTAssertTrue(state.diagnostics.entries.contains { $0.kind == .dropped && $0.placeId == "deleted-store" })
+        XCTAssertTrue(state.notificationService.scheduledForTesting.isEmpty)
+        state.signOut()
+    }
+
+    @MainActor
+    func testSimulatedArrivalSkipsTheSavedPlaceCheck() async throws {
+        let state = try await loadedSession(items: [GroceryItem(title: "Milk")])
+
+        state.locationService.simulateArriveHome()
+
+        try await waitUntil { state.homeArrivalTimer.isActive }
+        try await waitUntil { state.diagnostics.entries.contains { $0.kind == .unloadScheduled } }
+        XCTAssertFalse(state.diagnostics.entries.contains { $0.kind == .dropped })
+        state.signOut()
+    }
+
+    @MainActor
+    func testSignOutCancelsTheBatchInFlight() async throws {
+        let directory = temporaryFileURL("state").deletingLastPathComponent()
+        let state = try await loadedSession(
+            items: [GroceryItem(title: "Milk", isCompleted: true, completedBy: "session-user")],
+            stateDirectory: directory
+        )
+
+        // No await in between, so the batch can't start before the sign-out.
+        state.handleLocationEvent(enter(home))
+        let batch = try XCTUnwrap(state.locationBatchTask)
+        state.signOut()
+        await batch.value
+
+        XCTAssertFalse(state.homeArrivalTimer.isActive)
+        XCTAssertTrue(state.notificationService.scheduledForTesting.isEmpty)
+        XCTAssertFalse(state.diagnostics.entries.contains { $0.kind == .unloadScheduled })
+        let cooldownFile = directory.appendingPathComponent("reminder-cooldowns.json")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: cooldownFile.path))
+    }
+
     @MainActor
     func testRunningOutOfBackgroundTimeDropsQueuedEvents() {
         let activity = FakeBackgroundActivity()
-        let state = AppState(backgroundActivity: activity)
+        let state = AppState.forTesting(backgroundActivity: activity)
         state.currentUser = AppUser(id: "u", email: "u@b.c", displayName: "U")
 
         state.handleLocationEvent(LocationEvent(kind: .home, transition: .enter, placeId: "p", date: Date()))
@@ -242,7 +496,7 @@ final class LocationEventTests: XCTestCase {
     @MainActor
     func testSignOutClearsTheQueue() {
         let activity = FakeBackgroundActivity()
-        let state = AppState(backgroundActivity: activity)
+        let state = AppState.forTesting(backgroundActivity: activity)
         state.currentUser = AppUser(id: "u", email: "u@b.c", displayName: "U")
         state.handleLocationEvent(LocationEvent(kind: .home, transition: .enter, placeId: "p", date: Date()))
 
@@ -254,23 +508,317 @@ final class LocationEventTests: XCTestCase {
 
     // MARK: - Notification actions and timer
 
+    /// A launch with an unload reminder scheduled `minutesAgo` and saved on the device, as when
+    /// "Remind again" or "All brought in" cold-launches the app.
     @MainActor
-    func testSnoozeUsesTheCountFromTheNotification() async {
-        let state = AppState()
+    private func relaunch(
+        reminderScheduledMinutesAgo minutes: Double = 5,
+        broughtInMinutesAgo doneMinutes: Double? = nil
+    ) throws -> AppState {
+        let directory = temporaryFileURL("state").deletingLastPathComponent()
+        var cooldowns = AppState.ReminderCooldowns()
+        cooldowns.lastUnloadScheduled = Date().addingTimeInterval(-minutes * 60)
+        cooldowns.lastUnloadDone = doneMinutes.map { Date().addingTimeInterval(-$0 * 60) }
+        let store = JSONFileStore<AppState.ReminderCooldowns>(url: directory.appendingPathComponent("reminder-cooldowns.json"))
+        try store.save(cooldowns)
+        return AppState.forTesting(stateDirectory: directory)
+    }
+
+    @MainActor
+    func testSnoozeUsesTheCountFromTheNotification() async throws {
+        let state = try relaunch()
+        XCTAssertTrue(state.unloadOutstanding)
+        let previous = try XCTUnwrap(state.lastUnloadScheduled)
+        state.shoppingList = [GroceryItem(title: "Milk"), GroceryItem(title: "Eggs"), GroceryItem(title: "Bread")]
+
         await state.handleNotificationAction(NotificationAction.snooze, category: NotificationCategory.carUnload, itemCount: 2)
+
+        XCTAssertEqual(state.diagnostics.entries.last?.kind, .snoozed)
+        let scheduled = state.notificationService.scheduledForTesting
+        XCTAssertEqual(scheduled.map(\.identifier), [NotificationID.carUnload])
+        let request = try XCTUnwrap(scheduled.first)
+        XCTAssertEqual(request.content.userInfo[NotificationUserInfo.itemCount] as? Int, 2)
+        // No interval in the notification: the preferences' is used, and kept for the next snooze.
+        let trigger = try XCTUnwrap(request.trigger as? UNTimeIntervalNotificationTrigger)
+        XCTAssertEqual(trigger.timeInterval, state.preferences.carUnloadRepeatInterval)
+        XCTAssertEqual(request.content.userInfo[NotificationUserInfo.repeatInterval] as? TimeInterval, state.preferences.carUnloadRepeatInterval)
+        // The new reminder is the outstanding one now.
+        let snoozedAt = try XCTUnwrap(state.lastUnloadScheduled)
+        XCTAssertGreaterThan(snoozedAt, previous)
+        XCTAssertEqual(request.content.userInfo[NotificationUserInfo.scheduledAt] as? TimeInterval, snoozedAt.timeIntervalSince1970)
+    }
+
+    /// On a cold launch the preferences haven't loaded, so the interval comes from the notification.
+    @MainActor
+    func testSnoozeUsesTheIntervalFromTheNotification() async throws {
+        let state = try relaunch()
+        XCTAssertNotEqual(state.preferences.carUnloadRepeatInterval, 120)
+
+        await state.handleNotificationAction(
+            NotificationAction.snooze, category: NotificationCategory.carUnload, itemCount: 1, repeatInterval: 120
+        )
+
+        let request = try XCTUnwrap(state.notificationService.scheduledForTesting.last)
+        XCTAssertEqual(request.identifier, NotificationID.carUnload)
+        XCTAssertEqual((request.trigger as? UNTimeIntervalNotificationTrigger)?.timeInterval, 120)
+        XCTAssertEqual(request.content.userInfo[NotificationUserInfo.repeatInterval] as? TimeInterval, 120)
+        XCTAssertEqual(state.diagnostics.entries.last?.message, "Remind again in 2 min")
+    }
+
+    @MainActor
+    func testSnoozeKeepsAYourGroceriesReminder() async throws {
+        let state = try relaunch()
+
+        await state.handleNotificationAction(NotificationAction.snooze, category: NotificationCategory.carUnload, itemCount: 0)
+
+        XCTAssertEqual(state.diagnostics.entries.last?.kind, .snoozed)
+        let request = try XCTUnwrap(state.notificationService.scheduledForTesting.first)
+        XCTAssertEqual(request.content.userInfo[NotificationUserInfo.itemCount] as? Int, 0)
+        XCTAssertEqual(request.content.body, "Don't forget to bring your groceries inside.")
+    }
+
+    @MainActor
+    func testSnoozeWithoutACountBeforeTheListLoadsIsSkipped() async throws {
+        let state = try relaunch()
+        await state.handleNotificationAction(NotificationAction.snooze, category: NotificationCategory.carUnload)
+        let last = try XCTUnwrap(state.diagnostics.entries.last)
+        XCTAssertEqual(last.kind, .skipped)
+        XCTAssertTrue(last.message.contains("no item count"), last.message)
+        XCTAssertTrue(state.notificationService.scheduledForTesting.isEmpty)
+    }
+
+    @MainActor
+    func testSnoozeAfterAllBroughtInIsIgnored() async throws {
+        let state = try relaunch(reminderScheduledMinutesAgo: 10)
+        let scheduledAt = try XCTUnwrap(state.lastUnloadScheduled)
+
+        await state.handleNotificationAction(NotificationAction.markDone, category: NotificationCategory.carUnload)
+        await state.handleNotificationAction(
+            NotificationAction.snooze, category: NotificationCategory.carUnload, itemCount: 2, scheduledAt: scheduledAt
+        )
+
+        let last = try XCTUnwrap(state.diagnostics.entries.last)
+        XCTAssertEqual(last.kind, .skipped)
+        XCTAssertTrue(last.message.contains("already brought in"), last.message)
+        XCTAssertTrue(state.notificationService.scheduledForTesting.isEmpty)
+    }
+
+    /// A newer reminder is outstanding, but this one is from before the last "All brought in".
+    @MainActor
+    func testSnoozeOnAReminderFromBeforeTheLastUnloadIsIgnored() async throws {
+        let state = try relaunch(reminderScheduledMinutesAgo: 2, broughtInMinutesAgo: 5)
+        XCTAssertTrue(state.unloadOutstanding)
+
+        await state.handleNotificationAction(
+            NotificationAction.snooze, category: NotificationCategory.carUnload, itemCount: 2,
+            scheduledAt: Date().addingTimeInterval(-20 * 60)
+        )
+        XCTAssertEqual(state.diagnostics.entries.last?.kind, .skipped)
+        XCTAssertTrue(state.notificationService.scheduledForTesting.isEmpty)
+
+        await state.handleNotificationAction(
+            NotificationAction.snooze, category: NotificationCategory.carUnload, itemCount: 2,
+            scheduledAt: state.lastUnloadScheduled
+        )
         XCTAssertEqual(state.diagnostics.entries.last?.kind, .snoozed)
     }
 
     @MainActor
-    func testSnoozeWithoutACountBeforeTheListLoadsIsSkipped() async {
-        let state = AppState()
-        await state.handleNotificationAction(NotificationAction.snooze, category: NotificationCategory.carUnload)
-        XCTAssertEqual(state.diagnostics.entries.last?.kind, .skipped)
+    func testSnoozeOnAReminderFromHoursAgoIsIgnored() async throws {
+        let state = try relaunch(reminderScheduledMinutesAgo: 4 * 60)
+        XCTAssertFalse(state.unloadOutstanding)
+
+        await state.handleNotificationAction(
+            NotificationAction.snooze, category: NotificationCategory.carUnload, itemCount: 2,
+            scheduledAt: state.lastUnloadScheduled
+        )
+
+        let last = try XCTUnwrap(state.diagnostics.entries.last)
+        XCTAssertEqual(last.kind, .skipped)
+        XCTAssertTrue(last.message.contains("over 3 h old"), last.message)
+        XCTAssertTrue(state.notificationService.scheduledForTesting.isEmpty)
+    }
+
+    @MainActor
+    func testAllBroughtInFromAnOldReminderStillCounts() async throws {
+        let state = try relaunch(reminderScheduledMinutesAgo: 4 * 60)
+
+        await state.handleNotificationAction(NotificationAction.markDone, category: NotificationCategory.carUnload)
+
+        XCTAssertEqual(state.diagnostics.entries.last?.kind, .unloadDone)
+        XCTAssertNotNil(state.lastUnloadDone)
+        XCTAssertEqual(
+            Array(state.notificationService.removedDeliveredForTesting.suffix(2)),
+            [NotificationID.carUnload, NotificationID.carUnloadRepeat]
+        )
+    }
+
+    @MainActor
+    func testInertNotificationServiceRecordsWhatItWouldScheduleAndRemove() async throws {
+        let service = NotificationService(center: nil)
+        XCTAssertTrue(service.isInert)
+
+        let scheduledAt = Date(timeIntervalSince1970: 1_700_000_000)
+        await service.scheduleHomeArrivalReminder(after: 600, itemCount: 3, repeats: true, repeatInterval: 300, scheduledAt: scheduledAt)
+
+        XCTAssertEqual(service.scheduledForTesting.map(\.identifier), [NotificationID.carUnload, NotificationID.carUnloadRepeat])
+        let first = try XCTUnwrap(service.scheduledForTesting.first)
+        XCTAssertEqual(first.content.userInfo[NotificationUserInfo.itemCount] as? Int, 3)
+        XCTAssertEqual(first.content.userInfo[NotificationUserInfo.repeatInterval] as? TimeInterval, 300)
+        XCTAssertEqual(first.content.userInfo[NotificationUserInfo.scheduledAt] as? TimeInterval, 1_700_000_000)
+        XCTAssertEqual((first.trigger as? UNTimeIntervalNotificationTrigger)?.timeInterval, 600)
+        XCTAssertEqual(service.pendingCount, 2)
+        // Older car-unload reminders still in Notification Center go before the new one is added.
+        XCTAssertEqual(service.removedDeliveredForTesting, [NotificationID.carUnload, NotificationID.carUnloadRepeat])
+
+        service.markCarUnloadComplete()
+
+        XCTAssertEqual(Array(service.removedForTesting.suffix(2)), [NotificationID.carUnload, NotificationID.carUnloadRepeat])
+        XCTAssertEqual(
+            service.removedDeliveredForTesting,
+            [NotificationID.carUnload, NotificationID.carUnloadRepeat, NotificationID.carUnload, NotificationID.carUnloadRepeat]
+        )
+        try await waitUntil { service.pendingCount == 0 }
+
+        // Never prompts.
+        await service.requestAuthorization()
+        XCTAssertEqual(service.authorizationStatus, .notDetermined)
+    }
+
+    @MainActor
+    func testRefusedRequestsReportFailure() async {
+        let service = NotificationService(center: nil)
+        service.refusesRequestsForTesting = true
+
+        let scheduled = await service.scheduleHomeArrivalReminder(after: 600, itemCount: 1, repeats: true, repeatInterval: 300)
+        let sent = await service.sendGroceryStoreReminder(itemCount: 1)
+        XCTAssertFalse(scheduled)
+        XCTAssertFalse(sent)
+        XCTAssertTrue(service.scheduledForTesting.isEmpty)
+
+        service.refusesRequestsForTesting = false
+        let retried = await service.scheduleHomeArrivalReminder(after: 600, itemCount: 1, repeats: false, repeatInterval: 0)
+        XCTAssertTrue(retried)
+    }
+
+    @MainActor
+    func testARefusedUnloadReminderIsNotCountedAndStartsNoCooldown() async throws {
+        let state = try await loadedSession(items: [GroceryItem(title: "Milk", isCompleted: true, completedBy: "session-user")])
+        state.notificationService.refusesRequestsForTesting = true
+
+        state.handleLocationEvent(enter(home))
+        try await waitUntil { state.diagnostics.entries.contains { $0.kind == .error && $0.placeKind == .home } }
+        XCTAssertFalse(state.diagnostics.entries.contains { $0.kind == .unloadScheduled })
+        XCTAssertTrue(state.notificationService.scheduledForTesting.isEmpty)
+        // Nothing will fire, so there is nothing to mark brought in.
+        XCTAssertNil(state.lastUnloadScheduled)
+        XCTAssertFalse(state.unloadOutstanding)
+
+        // No cooldown was recorded, so the next arrival tries again instead of "already handled".
+        state.notificationService.refusesRequestsForTesting = false
+        state.handleLocationEvent(enter(home))
+        try await waitUntil { state.diagnostics.entries.contains { $0.kind == .unloadScheduled } }
+        XCTAssertFalse(state.diagnostics.entries.contains { $0.kind == .skipped })
+        state.signOut()
+    }
+
+    @MainActor
+    func testARefusedStoreReminderIsNotCountedAndStartsNoCooldown() async throws {
+        let state = try await loadedSession(items: [GroceryItem(title: "Bread")])
+        state.notificationService.refusesRequestsForTesting = true
+
+        state.handleLocationEvent(enter(store))
+        try await waitUntil { state.diagnostics.entries.contains { $0.kind == .error && $0.placeKind == .groceryStore } }
+        XCTAssertFalse(state.diagnostics.entries.contains { $0.kind == .storeReminderSent })
+
+        state.notificationService.refusesRequestsForTesting = false
+        state.handleLocationEvent(enter(store))
+        try await waitUntil { state.diagnostics.entries.contains { $0.kind == .storeReminderSent } }
+        XCTAssertFalse(state.diagnostics.entries.contains { $0.kind == .skipped })
+        state.signOut()
+    }
+
+    // MARK: - Outstanding unload
+
+    @MainActor
+    func testAnUnloadIsOutstandingForThreeHoursUntilBroughtIn() {
+        let scheduled = now.addingTimeInterval(-20 * 60)
+        XCTAssertFalse(AppState.isUnloadOutstanding(scheduled: nil, done: nil, now: now))
+        XCTAssertTrue(AppState.isUnloadOutstanding(scheduled: scheduled, done: nil, now: now))
+        XCTAssertTrue(AppState.isUnloadOutstanding(scheduled: scheduled, done: scheduled.addingTimeInterval(-60), now: now))
+        XCTAssertFalse(AppState.isUnloadOutstanding(scheduled: scheduled, done: scheduled.addingTimeInterval(60), now: now))
+
+        let window = AppState.outstandingUnloadWindow
+        XCTAssertEqual(window, 3 * 60 * 60)
+        XCTAssertTrue(AppState.isUnloadOutstanding(scheduled: now.addingTimeInterval(-window), done: nil, now: now))
+        XCTAssertFalse(AppState.isUnloadOutstanding(scheduled: now.addingTimeInterval(-window - 1), done: nil, now: now))
+    }
+
+    /// The countdown ends when the reminder fires; "brought in" has to stay available after that.
+    @MainActor
+    func testAScheduledReminderStaysOutstandingUntilBroughtIn() async throws {
+        let directory = temporaryFileURL("state").deletingLastPathComponent()
+        let widget = WidgetSnapshotStore(url: temporaryFileURL("widget-snapshot.json"))
+        let state = try await loadedSession(
+            items: [GroceryItem(title: "Milk", isCompleted: true, completedBy: "session-user")],
+            stateDirectory: directory,
+            widgetStore: widget
+        )
+        XCTAssertFalse(state.unloadOutstanding)
+
+        state.handleLocationEvent(enter(home))
+        try await waitUntil { state.unloadOutstanding }
+        XCTAssertNotNil(state.lastUnloadScheduled)
+        try await waitUntil { widget.load()?.unloadOutstanding == true }
+
+        // The countdown ending (the reminder firing) doesn't end it, and a relaunch keeps it.
+        state.homeArrivalTimer.refresh(now: Date().addingTimeInterval(60 * 60))
+        XCTAssertFalse(state.homeArrivalTimer.isActive)
+        state.refreshUnloadOutstanding()
+        XCTAssertTrue(state.unloadOutstanding)
+        XCTAssertTrue(AppState.forTesting(stateDirectory: directory).unloadOutstanding)
+
+        state.markUnloadComplete(source: "app")
+        XCTAssertFalse(state.unloadOutstanding)
+        XCTAssertFalse(AppState.forTesting(stateDirectory: directory).unloadOutstanding)
+        try await waitUntil { widget.load()?.unloadOutstanding == false }
+        state.signOut()
+    }
+
+    /// Handled after the delay has passed (e.g. a late relaunch): the countdown is already over and
+    /// the reminder fires in 5 s, but "brought in" is still offered.
+    @MainActor
+    func testALateArrivalStillOffersBroughtIn() async throws {
+        let state = try await loadedSession(items: [GroceryItem(title: "Milk", isCompleted: true, completedBy: "session-user")])
+        let arrival = Date().addingTimeInterval(-(state.preferences.homeArrivalDelay + 60))
+
+        state.handleLocationEvent(LocationEvent(kind: .home, transition: .enter, placeId: home.id, date: arrival))
+
+        try await waitUntil { state.unloadOutstanding }
+        XCTAssertFalse(state.homeArrivalTimer.isActive)
+        XCTAssertNil(state.homeArrivalTimer.endDate)
+        let reminder = try XCTUnwrap(state.notificationService.scheduledForTesting.first { $0.identifier == NotificationID.carUnload })
+        XCTAssertEqual((reminder.trigger as? UNTimeIntervalNotificationTrigger)?.timeInterval, 5)
+        state.signOut()
+    }
+
+    @MainActor
+    func testTappingTheUnloadReminderOpensTheArrivalTab() async {
+        let state = AppState.forTesting()
+
+        await state.handleNotificationAction(UNNotificationDefaultActionIdentifier, category: NotificationCategory.storeVisit)
+        XCTAssertNil(state.requestedTab)
+
+        await state.handleNotificationAction(UNNotificationDefaultActionIdentifier, category: NotificationCategory.carUnload)
+        XCTAssertEqual(state.requestedTab, .arrival)
+
+        state.signOut()
+        XCTAssertNil(state.requestedTab)
     }
 
     @MainActor
     func testMarkUnloadCompleteStopsTheTimerAndIsLogged() {
-        let state = AppState()
+        let state = AppState.forTesting()
         state.homeArrivalTimer.start(duration: 60)
 
         state.markUnloadComplete(source: "app")
@@ -280,10 +828,65 @@ final class LocationEventTests: XCTestCase {
     }
 
     @MainActor
-    func testUnloadNotificationCarriesTheItemCount() {
-        let content = NotificationService.carUnloadContent(itemCount: 3, isRepeat: false)
+    func testUnloadNotificationCarriesItsCountIntervalAndTime() {
+        let content = NotificationService.carUnloadContent(itemCount: 3, isRepeat: false, repeatInterval: 120, scheduledAt: now)
         XCTAssertEqual(content.userInfo[NotificationUserInfo.itemCount] as? Int, 3)
+        XCTAssertEqual(content.userInfo[NotificationUserInfo.repeatInterval] as? TimeInterval, 120)
+        XCTAssertEqual(content.userInfo[NotificationUserInfo.scheduledAt] as? TimeInterval, now.timeIntervalSince1970)
         XCTAssertEqual(content.categoryIdentifier, NotificationCategory.carUnload)
+    }
+
+    // MARK: - Daily reminder
+
+    private var dailyReminderOn: UserPreferences {
+        var prefs = sessionPreferences
+        prefs.dailyListReminderEnabled = true
+        return prefs
+    }
+
+    @MainActor
+    private func dailyReminders(_ state: AppState) -> [UNNotificationRequest] {
+        state.notificationService.scheduledForTesting.filter { $0.identifier == NotificationID.dailyList }
+    }
+
+    /// The count is in the reminder's text, so it follows the list without any settings change.
+    @MainActor
+    func testTheDailyReminderFollowsTheList() async throws {
+        let state = try await loadedSession(preferences: dailyReminderOn, items: [GroceryItem(title: "Milk")])
+
+        // Scheduled once the session has loaded, with nothing saved.
+        try await waitUntil(timeout: 5) { self.dailyReminders(state).last?.content.body == "1 item still on your list." }
+
+        await state.addItem("Bread")
+        try await waitUntil(timeout: 5) { self.dailyReminders(state).last?.content.body == "2 items still on your list." }
+
+        // Debounced: checking off both reschedules it once.
+        let before = dailyReminders(state).count
+        for item in state.shoppingList {
+            await state.toggleItem(item)
+        }
+        try await waitUntil(timeout: 5) {
+            self.dailyReminders(state).last?.content.body == "Your list is clear — add anything you need for tomorrow."
+        }
+        XCTAssertEqual(dailyReminders(state).count, before + 1)
+        state.signOut()
+    }
+
+    @MainActor
+    func testTheDailyReminderFollowsItsSettings() async throws {
+        let state = try await loadedSession(preferences: dailyReminderOn, items: [GroceryItem(title: "Milk")])
+        try await waitUntil(timeout: 5) { !self.dailyReminders(state).isEmpty }
+
+        state.preferences.reminderHour = 8
+        try await waitUntil(timeout: 5) {
+            (self.dailyReminders(state).last?.trigger as? UNCalendarNotificationTrigger)?.dateComponents.hour == 8
+        }
+
+        let scheduled = dailyReminders(state).count
+        state.preferences.dailyListReminderEnabled = false
+        try await waitUntil(timeout: 5) { state.notificationService.pendingCount == 0 }
+        XCTAssertEqual(dailyReminders(state).count, scheduled)
+        state.signOut()
     }
 
     @MainActor
@@ -297,5 +900,6 @@ final class LocationEventTests: XCTestCase {
 
         timer.start(duration: 600, startedAt: Date().addingTimeInterval(-700))
         XCTAssertFalse(timer.isActive)
+        XCTAssertNil(timer.endDate)
     }
 }

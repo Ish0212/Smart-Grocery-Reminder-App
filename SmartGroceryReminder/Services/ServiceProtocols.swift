@@ -31,8 +31,11 @@ protocol ShoppingListServiceProtocol {
     /// the user's own list and moves their existing items into it.
     func observeActiveList(userId: String) async -> AsyncThrowingStream<String, Error>
     /// Emits the list's items (from the local cache first when offline), then again on every change.
-    func observeItems(listId: String) async -> AsyncThrowingStream<[GroceryItem], Error>
+    /// Fails with `SharedListError.removedFromList` when `userId` isn't (or stops being) a member.
+    func observeItems(listId: String, userId: String) async -> AsyncThrowingStream<[GroceryItem], Error>
     func upsert(item: GroceryItem, listId: String) async throws
+    /// Changes an item only if it still exists, so an edit can't bring back one someone else deleted.
+    func update(item: GroceryItem, listId: String) async throws
     func delete(itemId: String, listId: String) async throws
     /// Emits the user's preferences once they are known, then again on every change.
     func observePreferences(userId: String) async -> AsyncThrowingStream<UserPreferences, Error>
@@ -43,7 +46,8 @@ protocol ShoppingListServiceProtocol {
     func createInvite(userId: String) async throws -> String
     /// Adds the user to the code's list and makes it their active list.
     func joinList(code: String, userId: String) async throws
-    /// Leaves the active list (if it's someone else's) and goes back to the user's own list.
+    /// Leaves the active list (if it's someone else's) and goes back to the user's own list. Also
+    /// works for someone the owner already removed.
     func leaveList(userId: String) async throws
 }
 

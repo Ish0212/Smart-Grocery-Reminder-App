@@ -60,11 +60,14 @@ final class HomeArrivalTimerService: ObservableObject {
     }
 
     private func startTicking() {
-        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.refresh()
             }
         }
+        // In the common modes, so the countdown keeps ticking while a list is being scrolled.
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
     }
 
     func completeUnload() {
@@ -79,6 +82,8 @@ final class HomeArrivalTimerService: ObservableObject {
         if remaining <= 0 {
             remainingSeconds = 0
             isActive = false
+            // Ended: the widget's snapshot drops the countdown.
+            self.endDate = nil
             timer?.invalidate()
             timer = nil
             store?.remove()

@@ -8,7 +8,7 @@ final class PlacesTests: XCTestCase {
 
     @MainActor
     func testAddStoreAppendsNewStore() async {
-        let state = AppState()
+        let state = AppState.forTesting()
         let before = state.preferences.savedStores.count
 
         let result = await state.addStore(store("Far Market", latitude: 38.5))
@@ -20,7 +20,7 @@ final class PlacesTests: XCTestCase {
 
     @MainActor
     func testAddStoreRejectsStoreWithin50Meters() async {
-        let state = AppState()
+        let state = AppState.forTesting()
         let existing = state.preferences.savedStores[0]
         let before = state.preferences.savedStores.count
         // 0.0002° of latitude is about 22 m.
@@ -34,7 +34,7 @@ final class PlacesTests: XCTestCase {
 
     @MainActor
     func testAddStoreStopsAtGeofenceLimit() async {
-        let state = AppState()
+        let state = AppState.forTesting()
         state.preferences.savedStores = (0..<AppState.maxStores).map {
             store("Store \($0)", latitude: 30 + Double($0) * 0.1)
         }
@@ -47,7 +47,7 @@ final class PlacesTests: XCTestCase {
 
     @MainActor
     func testSetHomeReplacesHome() async {
-        let state = AppState()
+        let state = AppState.forTesting()
         let home = GeoPlace(name: "Home", latitude: 40.7, longitude: -74.0, radiusMeters: 120, kind: .home)
 
         await state.setHome(home)

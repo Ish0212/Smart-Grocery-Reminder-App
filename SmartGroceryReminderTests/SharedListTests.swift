@@ -20,6 +20,13 @@ final class InviteCodeTests: XCTestCase {
         XCTAssertEqual(InviteCode.normalize("abcd-2345"), "ABCD2345")
         XCTAssertEqual(InviteCode.normalize(" ABCD 2345 "), "ABCD2345")
     }
+
+    func testNormalizeKeepsOnlyTheAlphabet() {
+        // A "/" would turn the code into a Firestore path.
+        XCTAssertEqual(InviteCode.normalize("abc/2345"), "ABC2345")
+        XCTAssertEqual(InviteCode.normalize("AB/CD.23\n45"), "ABCD2345")
+        XCTAssertEqual(InviteCode.normalize("01OIL"), "")
+    }
 }
 
 final class MockSharedListTests: XCTestCase {
@@ -76,6 +83,25 @@ final class MockSharedListTests: XCTestCase {
         }
     }
 
+    func testCodesOfTheWrongLengthFail() async throws {
+        let service = MockShoppingListService()
+        let code = try await service.createInvite(userId: "alice")
+
+        for wrong in [String(code.dropLast()), code + "A", "ABC/2345", "/"] {
+            do {
+                try await service.joinList(code: wrong, userId: "bob")
+                XCTFail("Expected invalidCode for \(wrong)")
+            } catch let error as SharedListError {
+                XCTAssertEqual(error, .invalidCode, wrong)
+            }
+        }
+
+        // Characters outside the alphabet are dropped, so a stray separator still works.
+        try await service.joinList(code: "\(code.prefix(4))/\(code.suffix(4))", userId: "bob")
+        let info = try await service.listInfo(listId: "alice")
+        XCTAssertEqual(info.memberIds, ["alice", "bob"])
+    }
+
     func testListsAreCapped() async throws {
         let service = MockShoppingListService()
         let code = try await service.createInvite(userId: "owner")
@@ -105,6 +131,45 @@ final class MockSharedListTests: XCTestCase {
         let items = try await first(await service.observeItems(listId: "bob"))
         XCTAssertEqual(items?.map(\.title), ["Bob's own"])
         let info = try await service.listInfo(listId: "alice")
+        XCTAssertEqual(info.memberIds, ["alice"])
+    }
+
+    func testOnlyMembersCanReadAList() async throws {
+        let service = MockShoppingListService()
+        try await service.upsert(item: GroceryItem(title: "Milk"), listId: "alice")
+        let code = await service.createInvite(userId: "alice")
+        try await service.joinList(code: code, userId: "bob")
+
+        let bobsView = try await first(await service.observeItems(listId: "alice", userId: "bob"))
+        XCTAssertEqual(bobsView?.map(\.title), ["Milk"])
+        do {
+            _ = try await first(await service.observeItems(listId: "alice", userId: "carol"))
+            XCTFail("Expected removedFromList")
+        } catch let error as SharedListError {
+            XCTAssertEqual(error, .removedFromList)
+        }
+    }
+
+    func testARemovedMemberIsCutOffAndCanStillLeave() async throws {
+        let service = MockShoppingListService()
+        let code = await service.createInvite(userId: "alice")
+        try await service.joinList(code: code, userId: "bob")
+        var bobsItems = await service.observeItems(listId: "alice", userId: "bob").makeAsyncIterator()
+        _ = try await bobsItems.next()
+
+        await service.removeMember("bob", fromList: "alice")
+        do {
+            _ = try await bobsItems.next()
+            XCTFail("Expected removedFromList")
+        } catch let error as SharedListError {
+            XCTAssertEqual(error, .removedFromList)
+        }
+
+        // Leave still takes them home, though they're no longer on the list.
+        try await service.leaveList(userId: "bob")
+        let active = try await first(await service.observeActiveList(userId: "bob"))
+        XCTAssertEqual(active, "bob")
+        let info = await service.listInfo(listId: "alice")
         XCTAssertEqual(info.memberIds, ["alice"])
     }
 
@@ -149,7 +214,7 @@ final class MockSharedListTests: XCTestCase {
 final class AppStateSharedListTests: XCTestCase {
     @MainActor
     private func signedInState(_ userId: String) -> AppState {
-        let state = AppState()
+        let state = AppState.forTesting()
         let user = AppUser(id: userId, email: "\(userId)@b.c", displayName: userId)
         state.currentUser = user
         state.isAuthenticated = true
@@ -198,6 +263,28 @@ final class AppStateSharedListTests: XCTestCase {
     }
 
     @MainActor
+    func testARemovedMemberIsSentBackToTheirOwnList() async throws {
+        let state = signedInState("bob")
+        try await state.listService.upsert(item: GroceryItem(title: "Bob's own"), listId: "bob")
+        try await state.listService.upsert(item: GroceryItem(title: "Alice's milk"), listId: "alice")
+        let code = try await state.listService.createInvite(userId: "alice")
+        try await state.joinList(code: code)
+        try await waitUntil { state.activeListId == "alice" && state.shoppingList.map(\.title) == ["Alice's milk"] }
+        XCTAssertNil(state.syncErrorMessage)
+
+        let service = try XCTUnwrap(state.listService as? MockShoppingListService)
+        await service.removeMember("bob", fromList: "alice")
+
+        try await waitUntil { state.activeListId == "bob" && state.shoppingList.map(\.title) == ["Bob's own"] }
+        XCTAssertEqual(state.syncErrorMessage, SharedListError.removedFromList.errorDescription)
+        let active = try await state.listService.observeActiveList(userId: "bob").first { _ in true }
+        XCTAssertEqual(active, "bob")
+        let info = try await state.listService.listInfo(listId: "alice")
+        XCTAssertEqual(info.memberIds, ["alice"])
+        state.signOut()
+    }
+
+    @MainActor
     func testTogglingRecordsWhoCheckedItOff() async throws {
         let state = signedInState("bob")
         try await state.listService.upsert(item: GroceryItem(title: "Milk"), listId: "bob")
@@ -222,10 +309,79 @@ final class AppStateSharedListTests: XCTestCase {
             GroceryItem(title: "Alice's", isCompleted: true, completedBy: "alice", updatedAt: now.addingTimeInterval(-10 * 60)),
             GroceryItem(title: "Before sharing", isCompleted: true, updatedAt: now.addingTimeInterval(-10 * 60)),
         ]
-        let plan = try XCTUnwrap(AppState.carUnloadReminderPlan(preferences: .default, items: items, now: now, userId: "bob"))
+        let plan = try XCTUnwrap(AppState.carUnloadReminderPlan(preferences: .default, items: items, now: now, context: .init(userId: "bob")))
         XCTAssertEqual(plan.itemCount, 2)
 
         let onlyAlices = [items[1]]
-        XCTAssertNil(AppState.carUnloadReminderPlan(preferences: .default, items: onlyAlices, now: now, userId: "bob"))
+        XCTAssertNil(AppState.carUnloadReminderPlan(preferences: .default, items: onlyAlices, now: now, context: .init(userId: "bob")))
+    }
+}
+
+/// The migration's clean-up of legacy `users/{uid}/items`, which must pass the rules on create.
+/// Dates stand in for Firestore timestamps.
+final class LegacyItemMigrationTests: XCTestCase {
+    private let date = Date(timeIntervalSince1970: 1_000_000)
+
+    private func legacy(_ overrides: [String: Any] = [:]) -> [String: Any] {
+        var data: [String: Any] = [
+            "id": "item-1",
+            "title": "Milk",
+            "notes": "",
+            "aisle": "Dairy",
+            "isCompleted": false,
+            "createdAt": date,
+            "updatedAt": date,
+        ]
+        data.merge(overrides) { $1 }
+        return data
+    }
+
+    private func migrated(_ data: [String: Any]) -> [String: Any]? {
+        FirestoreShoppingListService.migratableItem(data, documentID: "item-1", userId: "alice", isTimestamp: { $0 is Date })
+    }
+
+    func testAValidItemIsCopiedAsIs() throws {
+        let item = try XCTUnwrap(migrated(legacy(["completedBy": "alice", "isCompleted": true])))
+        XCTAssertEqual(Set(item.keys), ["id", "title", "notes", "aisle", "isCompleted", "completedBy", "createdAt", "updatedAt"])
+        XCTAssertEqual(item["title"] as? String, "Milk")
+        XCTAssertEqual(item["aisle"] as? String, "Dairy")
+        XCTAssertEqual(item["isCompleted"] as? Bool, true)
+        XCTAssertEqual(item["completedBy"] as? String, "alice")
+        XCTAssertEqual(item["createdAt"] as? Date, date)
+    }
+
+    func testOverlongTextIsCutToTheRulesLimits() throws {
+        // The rules count UTF-16 units: an emoji takes two, and is never cut in half.
+        let item = try XCTUnwrap(migrated(legacy([
+            "title": String(repeating: "😀", count: 300),
+            "notes": String(repeating: "n", count: 2500),
+            "aisle": "é" + String(repeating: "a", count: 300),
+        ])))
+        XCTAssertEqual(item["title"] as? String, String(repeating: "😀", count: 250))
+        XCTAssertEqual((item["notes"] as? String)?.utf16.count, 2000)
+        XCTAssertEqual((item["aisle"] as? String)?.utf16.count, 200)
+        XCTAssertEqual((item["aisle"] as? String)?.first, "é")
+        let odd = try XCTUnwrap(migrated(legacy(["title": "a" + String(repeating: "😀", count: 300)])))
+        XCTAssertEqual((odd["title"] as? String)?.utf16.count, 499)
+    }
+
+    func testUnknownFieldsAndSomeoneElsesCheckOffAreDropped() throws {
+        let item = try XCTUnwrap(migrated(legacy(["price": 3, "completedBy": "bob"])))
+        XCTAssertNil(item["price"])
+        XCTAssertNil(item["completedBy"])
+        let noOptionals = try XCTUnwrap(migrated(legacy().filter { !["notes", "aisle"].contains($0.key) }))
+        XCTAssertEqual(Set(noOptionals.keys), ["id", "title", "isCompleted", "createdAt", "updatedAt"])
+    }
+
+    func testItemsThatCantPassAreSkipped() {
+        XCTAssertNil(migrated(legacy(["id": "item-2"])))
+        XCTAssertNil(migrated(legacy().filter { $0.key != "id" }))
+        XCTAssertNil(migrated(legacy(["title": ""])))
+        XCTAssertNil(migrated(legacy().filter { $0.key != "title" }))
+        XCTAssertNil(migrated(legacy(["isCompleted": "yes"])))
+        XCTAssertNil(migrated(legacy(["isCompleted": 1])))
+        XCTAssertNil(migrated(legacy(["notes": 42])))
+        XCTAssertNil(migrated(legacy().filter { $0.key != "createdAt" }))
+        XCTAssertNil(migrated(legacy(["updatedAt": "yesterday"])))
     }
 }

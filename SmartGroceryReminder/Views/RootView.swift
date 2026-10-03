@@ -26,6 +26,7 @@ enum AppTab: String, CaseIterable {
 }
 
 struct MainTabView: View {
+    @EnvironmentObject private var appState: AppState
     @State private var selection: AppTab = .list
 
     var body: some View {
@@ -60,5 +61,14 @@ struct MainTabView: View {
                 selection = tab
             }
         }
+        // A tap on a reminder can arrive before this view exists (cold launch, session restore).
+        .onAppear(perform: openRequestedTab)
+        .onChange(of: appState.requestedTab) { _, _ in openRequestedTab() }
+    }
+
+    private func openRequestedTab() {
+        guard let tab = appState.requestedTab else { return }
+        selection = tab
+        appState.requestedTab = nil
     }
 }

@@ -59,6 +59,8 @@ enum SharedListError: LocalizedError, Equatable {
     case listFull
     case cannotLeaveOwnList
     case notSignedIn
+    /// The owner removed this user, or the list is gone.
+    case removedFromList
 
     var errorDescription: String? {
         switch self {
@@ -67,6 +69,7 @@ enum SharedListError: LocalizedError, Equatable {
         case .listFull: return "That list already has \(SharedListInfo.maxMembers) people."
         case .cannotLeaveOwnList: return "This is your own list, so there's nothing to leave."
         case .notSignedIn: return "Sign in first."
+        case .removedFromList: return "You're no longer on that list."
         }
     }
 }
@@ -81,9 +84,10 @@ enum InviteCode {
         String((0..<length).map { _ in alphabet.randomElement()! })
     }
 
-    /// Uppercases and drops spaces and dashes, so "abcd-2345" and "ABCD 2345" both work.
+    /// Uppercases and keeps only the alphabet's characters, so "abcd-2345" and "ABCD 2345" both work,
+    /// and nothing else reaches a lookup (a "/" would make the code a Firestore path and crash).
     static func normalize(_ code: String) -> String {
-        code.uppercased().filter { !$0.isWhitespace && $0 != "-" }
+        code.uppercased().filter { alphabet.contains($0) }
     }
 }
 

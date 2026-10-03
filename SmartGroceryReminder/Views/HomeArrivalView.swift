@@ -26,7 +26,7 @@ struct HomeArrivalView: View {
 
     private var statusCard: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label(timer.isActive ? "Unload timer running" : "Ready for arrival", systemImage: timer.isActive ? "timer" : "house")
+            Label(statusTitle, systemImage: statusIcon)
                 .font(.headline)
                 .foregroundStyle(Color("AccentGreen"))
 
@@ -35,8 +35,11 @@ struct HomeArrivalView: View {
                     .font(.system(size: 48, weight: .bold, design: .rounded))
                     .monospacedDigit()
                     .accessibilityLabel("\(timer.remainingSeconds / 60) minutes \(timer.remainingSeconds % 60) seconds remaining")
+            } else if appState.unloadOutstanding {
+                Text("Reminder sent — groceries still in the car?")
+                    .foregroundStyle(.secondary)
             } else {
-                Text("When you arrive home, a timer starts. After it ends, you'll get a reminder to bring groceries inside.")
+                Text("When you get home from shopping, a timer starts. After it ends, you'll get a reminder to bring groceries inside.")
                     .foregroundStyle(.secondary)
             }
 
@@ -50,6 +53,16 @@ struct HomeArrivalView: View {
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .fill(Color(.systemBackground))
         )
+    }
+
+    private var statusTitle: String {
+        if timer.isActive { return "Unload timer running" }
+        return appState.unloadOutstanding ? "Reminder sent" : "Ready for arrival"
+    }
+
+    private var statusIcon: String {
+        if timer.isActive { return "timer" }
+        return appState.unloadOutstanding ? "bell.badge" : "house"
     }
 
     private var delayPicker: some View {
@@ -92,7 +105,8 @@ struct HomeArrivalView: View {
             .buttonStyle(.borderedProminent)
             .tint(Color("AccentGreen"))
 
-            if timer.isActive {
+            // Also after the countdown ends, until the groceries are marked brought in.
+            if timer.isActive || appState.unloadOutstanding {
                 Button(role: .destructive) {
                     appState.markUnloadComplete(source: "app")
                 } label: {
@@ -109,7 +123,7 @@ struct HomeArrivalView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("How it works")
                 .font(.headline)
-            Text("1. Geofence detects arrival at your saved home.\n2. Your chosen delay starts counting down.\n3. A notification asks you to unload — with repeat + completion actions.")
+            Text("1. Check off what you buy, or visit a saved store.\n2. When you get home, your chosen delay starts counting down.\n3. A notification asks you to unload. Tap it to come back here, or use Remind again or All brought in.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }

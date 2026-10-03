@@ -15,7 +15,7 @@ struct SmartGroceryReminderApp: App {
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
-                delegate.appState.homeArrivalTimer.refresh()
+                delegate.appState.appDidBecomeActive()
             }
         }
     }

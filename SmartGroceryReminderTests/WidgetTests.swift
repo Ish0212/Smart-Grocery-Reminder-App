@@ -43,6 +43,20 @@ final class WidgetSnapshotTests: XCTestCase {
         XCTAssertEqual(store.load(), snapshot)
     }
 
+    func testOutstandingUnloadRoundTripsAndOlderSnapshotsStillDecode() throws {
+        let snapshot = WidgetSnapshot(openTitles: ["Milk"], unloadEndDate: nil, unloadOutstanding: true, now: now)
+        let decoded = try JSONDecoder().decode(WidgetSnapshot.self, from: JSONEncoder().encode(snapshot))
+        XCTAssertEqual(decoded, snapshot)
+        XCTAssertTrue(decoded.unloadOutstanding)
+
+        // Saved by a version without the field.
+        let older = Data(#"{"isSignedIn":true,"openCount":1,"openTitles":["Milk"]}"#.utf8)
+        let legacy = try JSONDecoder().decode(WidgetSnapshot.self, from: older)
+        XCTAssertFalse(legacy.unloadOutstanding)
+        XCTAssertEqual(legacy.openTitles, ["Milk"])
+        XCTAssertNil(legacy.unloadEndDate)
+    }
+
     func testStoreTreatsGarbageAsMissing() throws {
         let url = temporaryFileURL("widget-snapshot.json")
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -76,6 +90,14 @@ final class AppStateWidgetTests: XCTestCase {
     }
 
     @MainActor
+    func testSnapshotCarriesTheOutstandingUnload() {
+        let items = [GroceryItem(title: "Milk")]
+        XCTAssertTrue(AppState.widgetSnapshot(items: items, isSignedIn: true, unloadEndDate: nil, unloadOutstanding: true).unloadOutstanding)
+        XCTAssertFalse(AppState.widgetSnapshot(items: items, isSignedIn: true, unloadEndDate: nil).unloadOutstanding)
+        XCTAssertFalse(AppState.widgetSnapshot(items: items, isSignedIn: false, unloadEndDate: nil, unloadOutstanding: true).unloadOutstanding)
+    }
+
+    @MainActor
     func testSignedOutSnapshotHidesTheList() {
         let snapshot = AppState.widgetSnapshot(items: [GroceryItem(title: "Milk")], isSignedIn: false, unloadEndDate: nil)
         XCTAssertEqual(snapshot, .signedOut)
@@ -84,7 +106,7 @@ final class AppStateWidgetTests: XCTestCase {
     @MainActor
     func testAppWritesSnapshotsForTheListCountdownAndSignOut() async throws {
         let store = WidgetSnapshotStore(url: temporaryFileURL("widget-snapshot.json"))
-        let state = AppState(widgetStore: store)
+        let state = AppState.forTesting(widgetStore: store)
         let user = AppUser(id: "widget-user", email: "w@b.c", displayName: "W")
         state.currentUser = user
         state.isAuthenticated = true
@@ -101,5 +123,26 @@ final class AppStateWidgetTests: XCTestCase {
 
         state.signOut()
         try await waitUntil { store.load() == .signedOut }
+    }
+
+    /// A countdown that runs out on its own is cleared, so the snapshot is rewritten without it.
+    @MainActor
+    func testTheCountdownLeavesTheWidgetWhenItEnds() async throws {
+        let store = WidgetSnapshotStore(url: temporaryFileURL("widget-snapshot.json"))
+        let state = AppState.forTesting(widgetStore: store)
+        let user = AppUser(id: "widget-end-user", email: "e@b.c", displayName: "E")
+        state.currentUser = user
+        state.isAuthenticated = true
+        state.startSync(for: user)
+        try await waitUntil { state.itemsLoaded }
+
+        state.homeArrivalTimer.start(duration: 600)
+        try await waitUntil { store.load()?.unloadEndDate != nil }
+
+        state.homeArrivalTimer.refresh(now: Date().addingTimeInterval(601))
+        XCTAssertNil(state.homeArrivalTimer.endDate)
+        try await waitUntil { store.load()?.unloadEndDate == nil }
+        XCTAssertEqual(store.load()?.isSignedIn, true)
+        state.signOut()
     }
 }

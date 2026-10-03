@@ -32,7 +32,9 @@ service cloud.firestore {
       // list and its items together: in a batch, get() still sees the list as missing.
       match /items/{itemId} {
         allow read, delete: if isOwner(listId) || isListMember(listId);
-        allow create, update: if (isOwner(listId) || isListMember(listId)) && isValidItem(request.resource.data, itemId);
+        allow create, update: if (isOwner(listId) || isListMember(listId))
+          && isValidItem(request.resource.data, itemId)
+          && isHonestCompletedBy();
       }
     }
 
@@ -65,10 +67,13 @@ service cloud.firestore {
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
     }
 
-    // The owner may change the members, but stays the owner and a member.
+    // The owner may change the members, but stays the owner and a member. They may also remove a
+    // joinCode that older app versions stored on the list, but never add or change one.
     function isOwnerUpdate() {
+      let diff = request.resource.data.diff(resource.data);
       return request.auth.uid == resource.data.ownerId
-        && onlyChanged(['memberIds'])
+        && diff.addedKeys().union(diff.changedKeys()).hasOnly(['memberIds'])
+        && diff.removedKeys().hasOnly(['joinCode'])
         && request.auth.uid in request.resource.data.memberIds
         && request.resource.data.memberIds.size() <= 10;
     }
@@ -84,29 +89,45 @@ service cloud.firestore {
         && after.toSet() == before.toSet().difference([request.auth.uid].toSet());
     }
 
-    // A non-member adds only themselves, naming an unexpired invite for this list in joinCode.
+    // A non-member adds only themselves. The proof of invite is the joinCode in their own users/{uid}
+    // document, written in the same batch (getAfter sees it): it must name an unexpired invite for
+    // this list. Nothing on the list itself counts, so a joinCode left there by older app versions
+    // lets nobody in.
     function isJoining(listId) {
       let before = resource.data.memberIds;
       let after = request.resource.data.memberIds;
-      let invite = get(/databases/$(database)/documents/invites/$(request.resource.data.joinCode)).data;
+      let code = getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.joinCode;
+      let invite = get(/databases/$(database)/documents/invites/$(code)).data;
       return !(request.auth.uid in before)
-        && onlyChanged(['memberIds', 'joinCode'])
+        && onlyChanged(['memberIds'])
         && after.size() == before.size() + 1
         && after.size() <= 10
         && after.toSet() == before.toSet().union([request.auth.uid].toSet())
+        && code is string
         && invite.listId == listId
         && invite.expiresAt > request.time;
     }
 
+    // completedBy says who checked an item off, which decides whose unload reminder it counts for.
+    // A writer may set it only to themselves or clear it; someone else's stays as it was.
+    function isHonestCompletedBy() {
+      let data = request.resource.data;
+      return !('completedBy' in data)
+        || data.completedBy == request.auth.uid
+        || (resource != null && 'completedBy' in resource.data && data.completedBy == resource.data.completedBy);
+    }
+
     function isValidItem(data, itemId) {
       return data.keys().hasOnly(['id', 'title', 'notes', 'aisle', 'isCompleted', 'completedBy', 'createdAt', 'updatedAt'])
-        && data.keys().hasAll(['id', 'title', 'isCompleted'])
+        && data.keys().hasAll(['id', 'title', 'isCompleted', 'createdAt', 'updatedAt'])
         && data.id == itemId
         && data.title is string && data.title.size() > 0 && data.title.size() <= 500
         && (!('notes' in data) || (data.notes is string && data.notes.size() <= 2000))
         && (!('aisle' in data) || (data.aisle is string && data.aisle.size() <= 200))
         && (!('completedBy' in data) || (data.completedBy is string && data.completedBy.size() <= 128))
-        && data.isCompleted is bool;
+        && data.isCompleted is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
     }
   }
 }
