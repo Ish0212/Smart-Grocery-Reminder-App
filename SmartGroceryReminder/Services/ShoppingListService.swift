@@ -108,6 +108,25 @@ actor MockShoppingListService: ShoppingListServiceProtocol {
         setActiveList(userId, for: userId)
     }
 
+    func deleteAllData(userId: String) throws {
+        let joined = activeListId(for: userId)
+        if joined != userId {
+            lists[joined]?.memberIds.removeAll { $0 == userId }
+        }
+        itemsByList[userId] = nil
+        lists[userId] = nil
+        invites = invites.filter { $0.value.listId != userId }
+        preferencesByUser[userId] = nil
+        activeListByUser[userId] = nil
+        persist()
+        // Like Firestore once the list is gone: its members' item listeners are denied.
+        itemObservers.removeAll { observer in
+            guard observer.listId == userId else { return false }
+            observer.continuation.finish(throwing: SharedListError.removedFromList)
+            return true
+        }
+    }
+
     /// The owner takes someone off their list (the rules allow it; the app has no button for it
     /// yet). Like Firestore, that member's item listener is then denied.
     func removeMember(_ userId: String, fromList listId: String) {
@@ -410,6 +429,31 @@ final class FirestoreShoppingListService: ShoppingListServiceProtocol {
             try await listDocument(listId).updateData(["memberIds": FieldValue.arrayRemove([userId])])
         } catch let error as FirestoreErrorCode where error.code == .permissionDenied || error.code == .notFound {
             // Already removed, or the list is gone.
+        }
+    }
+
+    /// Each step waits for the server, so the account is deleted only once its data is gone. The
+    /// caller stops the listeners first: the active-list listener would recreate the list.
+    func deleteAllData(userId: String) async throws {
+        let user = try await userDocument(userId).getDocument(source: .server)
+        if let joined = user.get("activeListId") as? String, joined != userId {
+            try await leaveList(userId: userId)
+        }
+        let invites = try await db.collection("invites").whereField("createdBy", isEqualTo: userId).getDocuments(source: .server)
+        let items = try await itemsCollection(userId).getDocuments(source: .server)
+        let legacyItems = try await userDocument(userId).collection("items").getDocuments(source: .server)
+        let documents = (invites.documents + items.documents + legacyItems.documents).map(\.reference)
+        try await deleteDocuments(documents + [listDocument(userId), preferencesDocument(userId), userDocument(userId)])
+    }
+
+    /// In batches, which hold at most 500 writes each.
+    private func deleteDocuments(_ references: [DocumentReference]) async throws {
+        for start in stride(from: 0, to: references.count, by: 500) {
+            let batch = db.batch()
+            for reference in references[start..<min(start + 500, references.count)] {
+                batch.deleteDocument(reference)
+            }
+            try await batch.commit()
         }
     }
 

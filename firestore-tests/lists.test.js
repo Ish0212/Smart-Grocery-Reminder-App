@@ -11,9 +11,11 @@ import {
   doc,
   getDoc,
   getDocs,
+  query,
   setDoc,
   Timestamp,
   updateDoc,
+  where,
   writeBatch,
 } from "firebase/firestore";
 
@@ -90,9 +92,13 @@ describe("creating a list", () => {
     await assertFails(setDoc(doc(as("alice"), "lists/alice"), { ownerId: "alice", memberIds: ["alice"], joinCode: "GOOD2345" }));
   });
 
-  test("lists can't be deleted", async () => {
+  test("only the owner can delete their list, and then its members lose access", async () => {
     await seedSharedList();
-    await assertFails(deleteDoc(doc(as("alice"), "lists/alice")));
+    await assertFails(deleteDoc(doc(as("bob"), "lists/alice")));
+    await assertFails(deleteDoc(doc(as("carol"), "lists/alice")));
+    await assertFails(deleteDoc(doc(signedOut(), "lists/alice")));
+    await assertSucceeds(deleteDoc(doc(as("alice"), "lists/alice")));
+    await assertFails(getDocs(collection(as("bob"), "lists/alice/items")));
   });
 });
 
@@ -160,11 +166,15 @@ describe("invites", () => {
     await assertFails(setDoc(doc(as("alice"), "invites/CODE5678"), { listId: "alice", createdBy: "alice", expiresAt: inDays(7), extra: 1 }));
   });
 
-  test("anyone signed in can fetch a code, nobody can list them", async () => {
+  test("anyone signed in can fetch a code, but can only list their own", async () => {
     await seed("invites/CODE2345", { listId: "alice", createdBy: "alice", expiresAt: inDays(7) });
     await assertSucceeds(getDoc(doc(as("carol"), "invites/CODE2345")));
     await assertFails(getDoc(doc(signedOut(), "invites/CODE2345")));
     await assertFails(getDocs(collection(as("carol"), "invites")));
+    await assertFails(getDocs(query(collection(as("carol"), "invites"), where("createdBy", "==", "alice"))));
+    await assertFails(getDocs(collection(as("alice"), "invites")));
+    const own = await assertSucceeds(getDocs(query(collection(as("alice"), "invites"), where("createdBy", "==", "alice"))));
+    if (own.size !== 1) throw new Error(`expected alice's 1 invite, got ${own.size}`);
   });
 
   test("only the creator can delete an invite; nobody can edit one", async () => {
@@ -304,6 +314,40 @@ describe("leaving and managing members", () => {
     await assertFails(updateDoc(doc(as("alice"), "lists/alice"), { memberIds: arrayRemove("alice") }));
     await assertFails(updateDoc(doc(as("alice"), "lists/alice"), { ownerId: "bob" }));
     await assertSucceeds(updateDoc(doc(as("alice"), "lists/alice"), { memberIds: arrayRemove("bob") }));
+  });
+});
+
+describe("deleting an account", () => {
+  beforeEach(async () => {
+    await seedSharedList();
+    await seed("invites/GOOD2345", { listId: "alice", createdBy: "alice", expiresAt: inDays(7) });
+    await seed("users/alice", { activeListId: "alice" });
+    await seed("users/alice/preferences/main", { dailyListReminderEnabled: true });
+    await seed("users/alice/items/old-1", item({ id: "old-1" }));
+  });
+
+  test("the owner can delete what FirestoreShoppingListService.deleteAllData deletes, in one batch", async () => {
+    const db = as("alice");
+    const invites = await getDocs(query(collection(db, "invites"), where("createdBy", "==", "alice")));
+    const items = await getDocs(collection(db, "lists/alice/items"));
+    const legacy = await getDocs(collection(db, "users/alice/items"));
+    const batch = writeBatch(db);
+    for (const snapshot of [...invites.docs, ...items.docs, ...legacy.docs]) {
+      batch.delete(snapshot.ref);
+    }
+    for (const path of ["lists/alice", "users/alice/preferences/main", "users/alice"]) {
+      batch.delete(doc(db, path));
+    }
+    await assertSucceeds(batch.commit());
+    // bob was on alice's list; it's gone for him too.
+    await assertFails(getDocs(collection(as("bob"), "lists/alice/items")));
+  });
+
+  test("nobody else can delete your list, invites or user data", async () => {
+    await assertFails(deleteDoc(doc(as("bob"), "lists/alice")));
+    await assertFails(deleteDoc(doc(as("bob"), "invites/GOOD2345")));
+    await assertFails(deleteDoc(doc(as("bob"), "users/alice")));
+    await assertFails(deleteDoc(doc(as("bob"), "users/alice/preferences/main")));
   });
 });
 

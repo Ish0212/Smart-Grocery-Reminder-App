@@ -684,6 +684,28 @@ final class AppState: ObservableObject {
         requestedTab = nil
     }
 
+    /// Deletes the account and everything stored for it (App Store guideline 5.1.1(v)). The password
+    /// is checked first, so a wrong one changes nothing.
+    func deleteAccount(password: String) async throws {
+        guard let user = currentUser else { throw SharedListError.notSignedIn }
+        try await authService.reauthenticate(password: password)
+        // The active-list listener would see the user document go and create the list again.
+        stopSync()
+        do {
+            try await listService.deleteAllData(userId: user.id)
+            try await authService.deleteAccount()
+        } catch {
+            // The account is still there: carry on with it, so deleting can be tried again.
+            if currentUser?.id == user.id {
+                startSync(for: user)
+            }
+            throw error
+        }
+        signOut()
+        // The on-device log and stats describe this account's places and reminders.
+        diagnostics.clear()
+    }
+
     private func startSession(for user: AppUser) {
         canRestoreSession = false
         currentUser = user

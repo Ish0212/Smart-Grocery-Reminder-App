@@ -25,7 +25,8 @@ service cloud.firestore {
         && request.resource.data.ownerId == listId
         && request.resource.data.memberIds == [listId];
       allow update: if isSignedIn() && (isOwnerUpdate() || isLeaving() || isJoining(listId));
-      allow delete: if false;
+      // Only with the owner's account. Its members then fail isListMember and go back to their own lists.
+      allow delete: if isOwner(listId);
 
       // Items must match GroceryItem's Codable keys (pinned in ModelKeysTests.swift).
       // The owner (listId == uid) needs no lookup. That also lets the migration batch create the
@@ -38,9 +39,10 @@ service cloud.firestore {
       }
     }
 
-    // Invite codes: fetched by code only, never listed.
+    // Invite codes: fetched by code. The only query allowed is for your own (account deletion removes them).
     match /invites/{code} {
       allow get: if isSignedIn();
+      allow list: if isSignedIn() && resource.data.createdBy == request.auth.uid;
       allow create: if isSignedIn()
         && request.resource.data.keys().hasOnly(['listId', 'createdBy', 'expiresAt'])
         && request.resource.data.listId == request.auth.uid

@@ -78,6 +78,24 @@ final class MockAuthService: AuthServiceProtocol {
         onRestore(account.user)
     }
 
+    func reauthenticate(password: String) async throws {
+        guard let account = signedInAccount, account.passwordHash == Self.hash(password) else {
+            throw AuthError.invalidCredentials
+        }
+    }
+
+    func deleteAccount() async throws {
+        guard let account = signedInAccount else { return }
+        snapshot.accounts[account.user.email.lowercased()] = nil
+        snapshot.signedInUserId = nil
+        save()
+    }
+
+    private var signedInAccount: MockAccount? {
+        guard let userId = snapshot.signedInUserId else { return nil }
+        return snapshot.accounts.values.first { $0.user.id == userId }
+    }
+
     private func save() {
         guard canSave, let store else { return }
         try? store.save(snapshot)
@@ -131,6 +149,24 @@ final class FirebaseAuthService: AuthServiceProtocol {
                 self?.restoreListener = nil
             }
             onRestore(AppUser(firebaseUser: user))
+        }
+    }
+
+    func reauthenticate(password: String) async throws {
+        guard let user = Auth.auth().currentUser, let email = user.email else { throw AuthError.invalidCredentials }
+        do {
+            _ = try await user.reauthenticate(with: EmailAuthProvider.credential(withEmail: email, password: password))
+        } catch {
+            throw Self.mapError(error)
+        }
+    }
+
+    func deleteAccount() async throws {
+        guard let user = Auth.auth().currentUser else { return }
+        do {
+            try await user.delete()
+        } catch {
+            throw Self.mapError(error)
         }
     }
 

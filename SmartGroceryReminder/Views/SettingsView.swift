@@ -4,6 +4,11 @@ struct SettingsView: View {
     @EnvironmentObject private var appState: AppState
     @EnvironmentObject private var notificationService: NotificationService
 
+    @State private var isConfirmingDeletion = false
+    @State private var deletionPassword = ""
+    @State private var isDeletingAccount = false
+    @State private var deletionError: String?
+
     var body: some View {
         NavigationStack {
             Form {
@@ -17,6 +22,25 @@ struct SettingsView: View {
                     }
                     Button("Sign Out", role: .destructive) {
                         appState.signOut()
+                    }
+                    .disabled(isDeletingAccount)
+                    Button("Delete Account", role: .destructive) {
+                        deletionPassword = ""
+                        deletionError = nil
+                        isConfirmingDeletion = true
+                    }
+                    .disabled(isDeletingAccount)
+                    if isDeletingAccount {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                            Text("Deleting your account…")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    if let deletionError {
+                        Text(deletionError)
+                            .font(.footnote)
+                            .foregroundStyle(.red)
                     }
                 }
 
@@ -62,6 +86,13 @@ struct SettingsView: View {
                 }
             }
             .navigationTitle("Settings")
+            .alert("Delete your account?", isPresented: $isConfirmingDeletion) {
+                SecureField("Password", text: $deletionPassword)
+                Button("Delete", role: .destructive, action: deleteAccount)
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text(deletionWarning)
+            }
             .task {
                 await notificationService.refreshAuthorizationStatus()
                 // Reminders delivered since the count was last read are no longer pending.
@@ -70,6 +101,34 @@ struct SettingsView: View {
             .onChange(of: appState.preferences) { _, _ in
                 Task { await appState.savePreferences() }
             }
+        }
+    }
+
+    private var deletionWarning: String {
+        let userId = appState.currentUser?.id
+        let onOwnList = appState.activeListId == nil || appState.activeListId == userId
+        var warning = "This permanently deletes your account, your list, saved places and settings."
+        if !onOwnList {
+            warning += " You'll leave the list you joined; its owner keeps it."
+        } else if appState.sharedList?.isShared == true {
+            warning += " The people you share your list with will lose it too."
+        }
+        return warning + " Enter your password to confirm."
+    }
+
+    private func deleteAccount() {
+        let password = deletionPassword
+        deletionPassword = ""
+        deletionError = nil
+        isDeletingAccount = true
+        Task {
+            do {
+                // On success the app returns to the sign-in screen.
+                try await appState.deleteAccount(password: password)
+            } catch {
+                deletionError = "Couldn't delete your account: \(error.localizedDescription)"
+            }
+            isDeletingAccount = false
         }
     }
 
