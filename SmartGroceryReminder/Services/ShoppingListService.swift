@@ -43,6 +43,9 @@ actor MockShoppingListService: ShoppingListServiceProtocol {
     private var itemObservers: [(listId: String, readerId: String, continuation: AsyncThrowingStream<[GroceryItem], Error>.Continuation)] = []
     private var preferenceObservers: [(userId: String, continuation: AsyncThrowingStream<UserPreferences, Error>.Continuation)] = []
     private var activeListObservers: [(userId: String, continuation: AsyncThrowingStream<String, Error>.Continuation)] = []
+    private var syncObservers: [(listId: String, continuation: AsyncStream<SyncStatus>.Continuation)] = []
+    /// The demo backend saves instantly; tests set this to act out changes waiting for the network.
+    private var pendingWritesByList: [String: Bool] = [:]
 
     init(store: JSONFileStore<MockListSnapshot>? = nil, now: @escaping @Sendable () -> Date = { Date() }) {
         var snapshot = MockListSnapshot.seed
@@ -186,6 +189,20 @@ actor MockShoppingListService: ShoppingListServiceProtocol {
         itemsByList[listId] = items
         persist()
         publishItems(for: listId)
+    }
+
+    func observeSyncStatus(listId: String) -> AsyncStream<SyncStatus> {
+        let (stream, continuation) = AsyncStream<SyncStatus>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        syncObservers.append((listId, continuation))
+        continuation.yield(SyncStatus(hasPendingWrites: pendingWritesByList[listId] ?? false))
+        return stream
+    }
+
+    func setPendingWritesForTesting(_ pending: Bool, listId: String) {
+        pendingWritesByList[listId] = pending
+        for observer in syncObservers where observer.listId == listId {
+            observer.continuation.yield(SyncStatus(hasPendingWrites: pending))
+        }
     }
 
     /// Every patch received, so tests can check an edit sends only the fields it changed.
@@ -488,6 +505,25 @@ final class FirestoreShoppingListService: ShoppingListServiceProtocol {
 
     func upsert(item: GroceryItem, listId: String) async throws {
         try itemsCollection(listId).document(item.id).setData(from: item)
+    }
+
+    /// Metadata-only snapshots carry `hasPendingWrites`, which turns false once the server has
+    /// confirmed every local change. Errors end the stream quietly: the items stream reports them.
+    func observeSyncStatus(listId: String) -> AsyncStream<SyncStatus> {
+        AsyncStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
+            var last: SyncStatus?
+            let registration = itemsCollection(listId).addSnapshotListener(includeMetadataChanges: true) { snapshot, error in
+                guard let snapshot, error == nil else {
+                    continuation.finish()
+                    return
+                }
+                let status = SyncStatus(hasPendingWrites: snapshot.metadata.hasPendingWrites)
+                guard status != last else { return }
+                last = status
+                continuation.yield(status)
+            }
+            continuation.onTermination = { _ in registration.remove() }
+        }
     }
 
     /// `updateData` fails on a deleted document instead of creating it, and changes only the given

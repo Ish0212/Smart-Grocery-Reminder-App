@@ -25,6 +25,12 @@ struct ShoppingListView: View {
                         .foregroundStyle(.orange)
                 }
 
+                if appState.hasUnsyncedChanges {
+                    Label("Saved on this iPhone. It will sync when you're back online.", systemImage: "icloud.slash")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+
                 if openItems.isEmpty && doneItems.isEmpty {
                     ContentUnavailableView(
                         "List is empty",
