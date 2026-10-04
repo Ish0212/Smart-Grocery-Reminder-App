@@ -5,12 +5,14 @@ extension AppState {
     /// The demo backend with inert location and notification services: tests never touch the
     /// device's geofences or notifications, and never trigger a permission prompt. What the
     /// services would have done is in `monitoredForTesting` / `scheduledForTesting` / `removedForTesting`.
+    /// Pass a `FakeLocationManager` to script what iOS reports.
     static func forTesting(
         mockStorageDirectory: URL? = nil,
         diagnostics: DiagnosticsLog? = nil,
         backgroundActivity: BackgroundActivityProviding? = nil,
         stateDirectory: URL? = nil,
-        widgetStore: WidgetSnapshotStore? = nil
+        widgetStore: WidgetSnapshotStore? = nil,
+        locationManager: LocationManaging? = nil
     ) -> AppState {
         AppState(
             useMockBackend: true,
@@ -19,7 +21,8 @@ extension AppState {
             backgroundActivity: backgroundActivity,
             stateDirectory: stateDirectory,
             widgetStore: widgetStore,
-            systemServices: false
+            systemServices: false,
+            locationManager: locationManager
         )
     }
 }
