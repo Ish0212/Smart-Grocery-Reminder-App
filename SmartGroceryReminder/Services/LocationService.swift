@@ -246,9 +246,10 @@ extension LocationService {
     }
 
     /// iOS accepts a region, then reports here when it can't monitor it (e.g. over the 20-region
-    /// limit) and drops it. Recount, so Reminder health stops claiming the place is watched.
+    /// limit) and drops it. Recount, so Reminder health stops claiming the place is watched; the
+    /// refused region is left out even if iOS still lists it when it reports the failure.
     func handleMonitoringFailure(identifier: String, message: String) {
-        systemRegionCount = currentRegions.count
+        systemRegionCount = currentRegions.filter { $0.identifier != identifier }.count
         diagnostics.record(.error, "Couldn't monitor \(Self.describe(regionIdentifier: identifier)): \(message)")
     }
 
