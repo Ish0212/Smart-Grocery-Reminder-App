@@ -15,6 +15,9 @@ final class FakeLocationManager: LocationManaging {
     var regionLimit = 20
     /// Region identifiers iOS will refuse to monitor.
     var failingRegionIds: Set<String> = []
+    /// Apple doesn't document whether a refused region is still listed when the failure is
+    /// reported; `true` reports it first and drops it afterwards.
+    var reportsFailuresBeforeDroppingRegions = false
 
     private(set) var startCalls: [String] = []
     private(set) var stopCalls: [String] = []
@@ -55,8 +58,10 @@ extension FakeLocationManager {
     /// Drops the regions iOS refuses and reports each failure, the way `monitoringDidFailFor` would.
     func deliverMonitoringFailures(to service: LocationService) {
         for region in regionsThatWillFail {
-            monitoredRegions = monitoredRegions.filter { $0.identifier != region.identifier }
+            let drop = { self.monitoredRegions = self.monitoredRegions.filter { $0.identifier != region.identifier } }
+            if !reportsFailuresBeforeDroppingRegions { drop() }
             service.handleMonitoringFailure(identifier: region.identifier, message: "The operation couldn't be completed.")
+            if reportsFailuresBeforeDroppingRegions { drop() }
         }
     }
 

@@ -95,4 +95,18 @@ final class RegionMonitoringReliabilityTests: XCTestCase {
         XCTAssertEqual(log.entries.filter { $0.kind == .regionState }.count, 1)
         subscription.cancel()
     }
+
+    @MainActor
+    func testARefusedRegionStillListedWhenReportedIsNotCounted() {
+        let manager = FakeLocationManager()
+        manager.failingRegionIds = [RegionID.make(for: Reliability.store)]
+        manager.reportsFailuresBeforeDroppingRegions = true
+        let service = LocationService(diagnostics: DiagnosticsLog(), manager: manager)
+        service.startMonitoring(home: Reliability.home, stores: [Reliability.store])
+
+        manager.deliverMonitoringFailures(to: service)
+
+        XCTAssertEqual(service.systemRegionCount, 1)
+        XCTAssertFalse(health(of: service)["regions"]!.isOK)
+    }
 }

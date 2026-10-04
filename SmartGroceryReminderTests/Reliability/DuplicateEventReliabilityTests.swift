@@ -63,4 +63,23 @@ final class DuplicateEventReliabilityTests: XCTestCase {
         XCTAssertEqual(unloadsScheduled(state), 1)
         state.signOut()
     }
+
+    @MainActor
+    func testSigningOutAndBackInDropsBatchesQueuedBehindEachOther() async throws {
+        let manager = FakeLocationManager()
+        let state = try await reliabilitySession(manager: manager)
+        let user = try XCTUnwrap(state.currentUser)
+
+        // No await in between: the home batch hasn't run when the store batch queues behind it.
+        manager.deliverEnter(Reliability.home, to: state.locationService)
+        let homeBatch = try XCTUnwrap(state.locationBatchTask)
+        manager.deliverEnter(Reliability.store, to: state.locationService)
+        state.signOut()
+        state.currentUser = user // straight back into the same account
+        await homeBatch.value
+
+        XCTAssertFalse(state.diagnostics.entries.contains { $0.kind == .unloadScheduled })
+        XCTAssertTrue(state.notificationService.scheduledForTesting.isEmpty)
+        state.signOut()
+    }
 }
