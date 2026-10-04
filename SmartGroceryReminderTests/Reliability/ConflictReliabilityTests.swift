@@ -33,7 +33,8 @@ final class ConflictReliabilityTests: XCTestCase {
                 try await service.update(itemId: base.id, patch: patch, listId: listId)
             }
 
-            let item = try await XCTUnwrap(stored(service, base.id))
+            let found = try await stored(service, base.id)
+            let item = try XCTUnwrap(found)
             XCTAssertEqual(item.title, "Oat milk")
             XCTAssertTrue(item.isCompleted)
             XCTAssertEqual(item.completedBy, "bob")
@@ -46,7 +47,8 @@ final class ConflictReliabilityTests: XCTestCase {
         try await service.update(itemId: base.id, patch: try patch({ $0.title = "Oat milk" }, at: 1), listId: listId)
         try await service.update(itemId: base.id, patch: try patch({ $0.title = "Almond milk" }, at: 2), listId: listId)
 
-        let item = try await XCTUnwrap(stored(service, base.id))
+        let found = try await stored(service, base.id)
+        let item = try XCTUnwrap(found)
         XCTAssertEqual(item.title, "Almond milk")
     }
 
@@ -65,7 +67,8 @@ final class ConflictReliabilityTests: XCTestCase {
         try await service.update(itemId: base.id, patch: try patch({ $0.isCompleted = true; $0.completedBy = "alice" }, at: 1), listId: listId)
         try await service.update(itemId: base.id, patch: try patch({ $0.isCompleted = true; $0.completedBy = "bob" }, at: 2), listId: listId)
 
-        let item = try await XCTUnwrap(stored(service, base.id))
+        let found = try await stored(service, base.id)
+        let item = try XCTUnwrap(found)
         XCTAssertTrue(item.isCompleted)
         XCTAssertEqual(item.completedBy, "bob")
     }
