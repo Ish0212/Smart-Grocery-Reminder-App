@@ -129,4 +129,24 @@ final class ConflictReliabilityTests: XCTestCase {
         XCTAssertNil(sent.first?.patch.aisle)
         state.signOut()
     }
+
+    @MainActor
+    func testARenameWhileTheEditSheetIsOpenIsNotUndoneBySaving() async throws {
+        let milk = GroceryItem(title: "Milk")
+        let (state, service) = try await session(items: [milk])
+        // The sheet opened with this copy; then a family member renames the item.
+        let opened = milk
+        try await service.update(itemId: milk.id, patch: ItemPatch(title: "Oat milk", updatedAt: Date()), listId: Reliability.userId)
+        try await waitUntil { state.shoppingList.first?.title == "Oat milk" }
+
+        // Save after changing only the notes; the sheet still shows the old name.
+        await state.editItem(opened, title: "Milk", notes: "the big one", aisle: "")
+
+        let sent = await service.patchesForTesting.last?.patch
+        XCTAssertNil(sent?.title)
+        XCTAssertEqual(sent?.notes, "the big one")
+        XCTAssertEqual(state.shoppingList.first?.title, "Oat milk")
+        XCTAssertEqual(state.shoppingList.first?.notes, "the big one")
+        state.signOut()
+    }
 }
