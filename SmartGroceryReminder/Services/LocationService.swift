@@ -48,7 +48,7 @@ final class LocationService: NSObject, ObservableObject {
     let events = PassthroughSubject<LocationEvent, Never>()
 
     /// `nil` when inert (tests): nothing reaches iOS and no permission is requested.
-    private let manager: CLLocationManager?
+    private let manager: LocationManaging?
     private let diagnostics: DiagnosticsLog
     /// Inert mode only: the regions iOS would be monitoring, by region identifier.
     private(set) var monitoredForTesting: [String: CLCircularRegion] = [:]
@@ -56,7 +56,7 @@ final class LocationService: NSObject, ObservableObject {
     /// - Parameters:
     ///   - diagnostics: `nil` keeps events in an in-memory log.
     ///   - manager: `nil` for an inert service that only records the regions it would monitor.
-    init(diagnostics: DiagnosticsLog? = nil, manager: CLLocationManager? = CLLocationManager()) {
+    init(diagnostics: DiagnosticsLog? = nil, manager: LocationManaging? = CLLocationManager()) {
         self.diagnostics = diagnostics ?? DiagnosticsLog()
         self.manager = manager
         super.init()
@@ -227,79 +227,96 @@ final class LocationService: NSObject, ObservableObject {
     }
 }
 
+// MARK: - Delegate handling
+// The delegate callbacks below only hop to the main actor; the logic lives here so tests can
+// drive it with a fake manager.
+extension LocationService {
+    func handleAuthorizationChange(status: CLAuthorizationStatus, accuracy: CLAccuracyAuthorization) {
+        guard status != authorizationStatus || accuracy != accuracyAuthorization else { return }
+        authorizationStatus = status
+        accuracyAuthorization = accuracy
+        diagnostics.record(
+            .permission,
+            "Location access: \(Self.describe(status)), \(accuracy == .fullAccuracy ? "precise" : "approximate")"
+        )
+    }
+
+    func handleLocationError(message: String) {
+        diagnostics.record(.error, "Location fix failed: \(message)")
+    }
+
+    /// iOS accepts a region, then reports here when it can't monitor it (e.g. over the 20-region
+    /// limit) and drops it. Recount, so Reminder health stops claiming the place is watched; the
+    /// refused region is left out even if iOS still lists it when it reports the failure.
+    func handleMonitoringFailure(identifier: String, message: String) {
+        systemRegionCount = currentRegions.filter { $0.identifier != identifier }.count
+        diagnostics.record(.error, "Couldn't monitor \(Self.describe(regionIdentifier: identifier)): \(message)")
+    }
+
+    func handleDidStartMonitoring(regionCount: Int) {
+        systemRegionCount = regionCount
+    }
+
+    func handleRegionState(_ state: CLRegionState, identifier: String) {
+        guard regionStates[identifier] != state else { return }
+        regionStates[identifier] = state
+        diagnostics.record(
+            .regionState,
+            "\(Self.describe(regionIdentifier: identifier)): \(Self.describe(state))",
+            placeId: RegionID.parse(identifier)?.placeId
+        )
+    }
+
+    func handleLocationFix(_ coordinate: CLLocationCoordinate2D) {
+        currentLocation = coordinate
+    }
+}
+
 extension LocationService: CLLocationManagerDelegate {
     nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         let status = manager.authorizationStatus
         let accuracy = manager.accuracyAuthorization
-        Task { @MainActor in
-            guard status != self.authorizationStatus || accuracy != self.accuracyAuthorization else { return }
-            self.authorizationStatus = status
-            self.accuracyAuthorization = accuracy
-            self.diagnostics.record(
-                .permission,
-                "Location access: \(Self.describe(status)), \(accuracy == .fullAccuracy ? "precise" : "approximate")"
-            )
-        }
+        Task { @MainActor in self.handleAuthorizationChange(status: status, accuracy: accuracy) }
     }
 
     nonisolated func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         // Required by requestLocation(). Transient "location unknown" errors are expected indoors.
         let message = error.localizedDescription
-        Task { @MainActor in
-            self.diagnostics.record(.error, "Location fix failed: \(message)")
-        }
+        Task { @MainActor in self.handleLocationError(message: message) }
     }
 
     nonisolated func locationManager(_ manager: CLLocationManager, monitoringDidFailFor region: CLRegion?, withError error: Error) {
         let identifier = region?.identifier ?? "a region"
         let message = error.localizedDescription
-        Task { @MainActor in
-            self.diagnostics.record(.error, "Couldn't monitor \(Self.describe(regionIdentifier: identifier)): \(message)")
-        }
+        Task { @MainActor in self.handleMonitoringFailure(identifier: identifier, message: message) }
     }
 
     nonisolated func locationManager(_ manager: CLLocationManager, didStartMonitoringFor region: CLRegion) {
         manager.requestState(for: region)
         let count = manager.monitoredRegions.count
-        Task { @MainActor in
-            self.systemRegionCount = count
-        }
+        Task { @MainActor in self.handleDidStartMonitoring(regionCount: count) }
     }
 
     nonisolated func locationManager(_ manager: CLLocationManager, didDetermineState state: CLRegionState, for region: CLRegion) {
         // Also reported alongside every enter/exit; only the state is recorded, never an event.
         let identifier = region.identifier
-        Task { @MainActor in
-            guard self.regionStates[identifier] != state else { return }
-            self.regionStates[identifier] = state
-            self.diagnostics.record(
-                .regionState,
-                "\(Self.describe(regionIdentifier: identifier)): \(Self.describe(state))",
-                placeId: RegionID.parse(identifier)?.placeId
-            )
-        }
+        Task { @MainActor in self.handleRegionState(state, identifier: identifier) }
     }
 
     nonisolated func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let coordinate = locations.last?.coordinate else { return }
-        Task { @MainActor in
-            self.currentLocation = coordinate
-        }
+        Task { @MainActor in self.handleLocationFix(coordinate) }
     }
 
     nonisolated func locationManager(_ manager: CLLocationManager, didEnterRegion region: CLRegion) {
         let identifier = region.identifier
         let date = Date()
-        Task { @MainActor in
-            self.handleRegionTransition(identifier: identifier, transition: .enter, date: date)
-        }
+        Task { @MainActor in self.handleRegionTransition(identifier: identifier, transition: .enter, date: date) }
     }
 
     nonisolated func locationManager(_ manager: CLLocationManager, didExitRegion region: CLRegion) {
         let identifier = region.identifier
         let date = Date()
-        Task { @MainActor in
-            self.handleRegionTransition(identifier: identifier, transition: .exit, date: date)
-        }
+        Task { @MainActor in self.handleRegionTransition(identifier: identifier, transition: .exit, date: date) }
     }
 }

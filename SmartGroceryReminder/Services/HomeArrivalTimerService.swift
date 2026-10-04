@@ -59,6 +59,13 @@ final class HomeArrivalTimerService: ObservableObject {
         store?.remove()
     }
 
+    /// Tests only: stops the ticking timer the way the app being killed does, leaving the saved
+    /// countdown on disk for the next launch.
+    func cancelTickingForTesting() {
+        timer?.invalidate()
+        timer = nil
+    }
+
     private func startTicking() {
         let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor in

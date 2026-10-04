@@ -70,6 +70,7 @@ final class AppState: ObservableObject {
     ///   - systemServices: `false` (tests) makes the location and notification services inert:
     ///     they only record what they would do, and never ask for permission.
     ///   - showsTestTools: whether the simulate buttons and the demo store are offered.
+    ///   - locationManager: replaces the system location manager (tests); `nil` follows `systemServices`.
     init(
         useMockBackend: Bool = true,
         mockStorageDirectory: URL? = nil,
@@ -78,7 +79,8 @@ final class AppState: ObservableObject {
         stateDirectory: URL? = nil,
         widgetStore: WidgetSnapshotStore? = nil,
         systemServices: Bool = true,
-        showsTestTools: Bool = true
+        showsTestTools: Bool = true,
+        locationManager: LocationManaging? = nil
     ) {
         // Defaults are created here: in Swift 5 mode a default argument can't call a main-actor initializer.
         let diagnostics = diagnostics ?? DiagnosticsLog()
@@ -98,7 +100,10 @@ final class AppState: ObservableObject {
         self.diagnostics = diagnostics
         self.widgetStore = widgetStore
         self.backgroundActivity = backgroundActivity ?? NoBackgroundActivity()
-        self.locationService = LocationService(diagnostics: diagnostics, manager: systemServices ? CLLocationManager() : nil)
+        self.locationService = LocationService(
+            diagnostics: diagnostics,
+            manager: locationManager ?? (systemServices ? CLLocationManager() : nil)
+        )
         self.notificationService = NotificationService(center: systemServices ? UNUserNotificationCenter.current() : nil)
         self.homeArrivalTimer = HomeArrivalTimerService(
             store: stateDirectory.map { JSONFileStore<ArrivalTimerState>(url: $0.appendingPathComponent("arrival-timer.json")) }
@@ -334,27 +339,29 @@ final class AppState: ObservableObject {
         }
         pendingLocationEvents.removeAll()
         recordStoreVisits(in: events)
-        let now = Date()
         let userId = currentUser?.id
-        let decisions = Self.coalesced(events).map { event in
-            (event, Self.decision(
-                for: event,
-                preferences: preferences,
-                items: shoppingList,
-                now: now,
-                context: ReminderContext(
-                    lastHandled: cooldowns.lastHandled[Self.cooldownKey(event.kind, event.placeId)],
-                    lastUnloadDone: cooldowns.lastUnloadDone,
-                    lastStoreVisit: cooldowns.lastStoreVisit,
-                    userId: userId
-                )
-            ))
-        }
+        // Batches run one after another, and each decides only once the previous one has recorded
+        // its cooldown: iOS can report the same enter twice within moments, and deciding both
+        // against the same old cooldowns would remind twice.
+        let previousBatch = locationBatchTask
         locationBatchTask = Task {
-            for (event, decision) in decisions {
+            await previousBatch?.value
+            for event in Self.coalesced(events) {
                 // Signed out (or into another account) meanwhile: don't start the timer, schedule
                 // the reminder or recreate the cleared cooldowns. signOut ended the background activity.
                 guard !Task.isCancelled, let userId, self.currentUser?.id == userId else { return }
+                let decision = Self.decision(
+                    for: event,
+                    preferences: self.preferences,
+                    items: self.shoppingList,
+                    now: Date(),
+                    context: ReminderContext(
+                        lastHandled: self.cooldowns.lastHandled[Self.cooldownKey(event.kind, event.placeId)],
+                        lastUnloadDone: self.cooldowns.lastUnloadDone,
+                        lastStoreVisit: self.cooldowns.lastStoreVisit,
+                        userId: userId
+                    )
+                )
                 await self.apply(decision, for: event, userId: userId)
             }
             self.endBackgroundActivity()
