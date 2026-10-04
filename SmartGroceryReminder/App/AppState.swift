@@ -936,16 +936,17 @@ final class AppState: ObservableObject {
         try? await listService.update(itemId: item.id, patch: patch, listId: listId)
     }
 
-    /// Saves an edit to the item's name, notes or aisle. Only the fields that changed are sent, so
-    /// a check-off (or another edit) someone made meanwhile isn't overwritten. An empty name is ignored.
+    /// Saves an edit to the item's name, notes or aisle. `item` is the copy the editor opened: only
+    /// fields changed from it are sent, so a check-off or rename someone made meanwhile isn't
+    /// overwritten. An empty name is ignored, and so is an item deleted meanwhile.
     func editItem(_ item: GroceryItem, title: String, notes: String, aisle: String) async {
         let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty, let index = shoppingList.firstIndex(where: { $0.id == item.id }) else { return }
-        var edited = shoppingList[index]
+        var edited = item
         edited.title = title
         edited.notes = notes
         edited.aisle = aisle
-        guard let patch = ItemPatch.changes(from: shoppingList[index], to: edited, at: Date()) else { return }
+        guard let patch = ItemPatch.changes(from: item, to: edited, at: Date()) else { return }
         shoppingList[index] = patch.applied(to: shoppingList[index])
         guard let listId = editableListId else { return }
         try? await listService.update(itemId: item.id, patch: patch, listId: listId)
