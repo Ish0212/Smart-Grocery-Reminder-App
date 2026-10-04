@@ -41,8 +41,9 @@ protocol ShoppingListServiceProtocol {
     /// Fails with `SharedListError.removedFromList` when `userId` isn't (or stops being) a member.
     func observeItems(listId: String, userId: String) async -> AsyncThrowingStream<[GroceryItem], Error>
     func upsert(item: GroceryItem, listId: String) async throws
-    /// Changes an item only if it still exists, so an edit can't bring back one someone else deleted.
-    func update(item: GroceryItem, listId: String) async throws
+    /// Changes only the patched fields, and only if the item still exists, so an edit can't bring
+    /// back one someone else deleted or overwrite fields it didn't touch.
+    func update(itemId: String, patch: ItemPatch, listId: String) async throws
     func delete(itemId: String, listId: String) async throws
     /// Emits the user's preferences once they are known, then again on every change.
     func observePreferences(userId: String) async -> AsyncThrowingStream<UserPreferences, Error>

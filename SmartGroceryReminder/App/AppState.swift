@@ -887,12 +887,31 @@ final class AppState: ObservableObject {
 
     func toggleItem(_ item: GroceryItem) async {
         guard let index = shoppingList.firstIndex(where: { $0.id == item.id }) else { return }
-        shoppingList[index].isCompleted.toggle()
-        shoppingList[index].completedBy = shoppingList[index].isCompleted ? currentUser?.id : nil
-        shoppingList[index].updatedAt = Date()
+        let checked = !shoppingList[index].isCompleted
+        // Only the completion is sent, so a rename someone made meanwhile isn't overwritten.
+        let patch = ItemPatch(
+            completion: .init(isCompleted: checked, completedBy: checked ? currentUser?.id : nil),
+            updatedAt: Date()
+        )
+        shoppingList[index] = patch.applied(to: shoppingList[index])
         guard let listId = editableListId else { return }
         // An update, not an upsert: if someone else deleted the item meanwhile, it stays deleted.
-        try? await listService.update(item: shoppingList[index], listId: listId)
+        try? await listService.update(itemId: item.id, patch: patch, listId: listId)
+    }
+
+    /// Saves an edit to the item's name, notes or aisle. Only the fields that changed are sent, so
+    /// a check-off (or another edit) someone made meanwhile isn't overwritten. An empty name is ignored.
+    func editItem(_ item: GroceryItem, title: String, notes: String, aisle: String) async {
+        let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty, let index = shoppingList.firstIndex(where: { $0.id == item.id }) else { return }
+        var edited = shoppingList[index]
+        edited.title = title
+        edited.notes = notes
+        edited.aisle = aisle
+        guard let patch = ItemPatch.changes(from: shoppingList[index], to: edited, at: Date()) else { return }
+        shoppingList[index] = patch.applied(to: shoppingList[index])
+        guard let listId = editableListId else { return }
+        try? await listService.update(itemId: item.id, patch: patch, listId: listId)
     }
 
     func deleteItems(at offsets: IndexSet) async {
