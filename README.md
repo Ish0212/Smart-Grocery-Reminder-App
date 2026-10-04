@@ -40,6 +40,23 @@ CI has no `GoogleService-Info.plist`, so it builds the Firebase code but runs th
 
 If a run fails, open it under the repo's **Actions** tab to read the log, or download the `xcresult` artifact and open it in Xcode.
 
+## Reliability suite
+
+Location reminders run when iOS decides, not when the app does, so the riskiest code is the code
+that reacts to iOS. `SmartGroceryReminderTests/Reliability/` tests it scenario by scenario, with
+a `FakeLocationManager` standing in for CoreLocation (behind the `LocationManaging` protocol):
+
+| Risk | Scenarios |
+|---|---|
+| Permissions | Always downgraded to While Using, Precise Location off, access denied, the same change reported twice, access restored |
+| Region monitoring | iOS refuses a geofence, more than 20 places, re-applying places touches nothing, region-state reports never become reminders |
+| Duplicate events | the same enter twice, flapping at the home boundary, a replay while the list loads: one reminder each |
+| Relaunch | the countdown and cooldowns survive the app being killed; an ended countdown and corrupt state files start clean |
+
+The suite found two bugs: when iOS refused to monitor a place, Reminder health kept showing it as
+watched; and an enter iOS reported twice within moments sent two unload reminders, because the
+second was decided before the first had recorded its cooldown.
+
 ## Quick start (Mac)
 
 ### Option A — XcodeGen (recommended)
