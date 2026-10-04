@@ -43,6 +43,9 @@ actor MockShoppingListService: ShoppingListServiceProtocol {
     private var itemObservers: [(listId: String, readerId: String, continuation: AsyncThrowingStream<[GroceryItem], Error>.Continuation)] = []
     private var preferenceObservers: [(userId: String, continuation: AsyncThrowingStream<UserPreferences, Error>.Continuation)] = []
     private var activeListObservers: [(userId: String, continuation: AsyncThrowingStream<String, Error>.Continuation)] = []
+    private var syncObservers: [(listId: String, continuation: AsyncStream<SyncStatus>.Continuation)] = []
+    /// The demo backend saves instantly; tests set this to act out changes waiting for the network.
+    private var pendingWritesByList: [String: Bool] = [:]
 
     init(store: JSONFileStore<MockListSnapshot>? = nil, now: @escaping @Sendable () -> Date = { Date() }) {
         var snapshot = MockListSnapshot.seed
@@ -188,10 +191,29 @@ actor MockShoppingListService: ShoppingListServiceProtocol {
         publishItems(for: listId)
     }
 
-    func update(item: GroceryItem, listId: String) async throws {
-        // Like Firestore's updateData, a deleted item stays deleted.
-        guard let index = itemsByList[listId]?.firstIndex(where: { $0.id == item.id }) else { return }
-        itemsByList[listId]?[index] = item
+    func observeSyncStatus(listId: String) -> AsyncStream<SyncStatus> {
+        let (stream, continuation) = AsyncStream<SyncStatus>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        syncObservers.append((listId, continuation))
+        continuation.yield(SyncStatus(hasPendingWrites: pendingWritesByList[listId] ?? false))
+        return stream
+    }
+
+    func setPendingWritesForTesting(_ pending: Bool, listId: String) {
+        pendingWritesByList[listId] = pending
+        for observer in syncObservers where observer.listId == listId {
+            observer.continuation.yield(SyncStatus(hasPendingWrites: pending))
+        }
+    }
+
+    /// Every patch received, so tests can check an edit sends only the fields it changed.
+    private(set) var patchesForTesting: [(itemId: String, patch: ItemPatch)] = []
+
+    func update(itemId: String, patch: ItemPatch, listId: String) async throws {
+        patchesForTesting.append((itemId, patch))
+        // Like Firestore's updateData, a deleted item stays deleted and other fields are kept.
+        guard let index = itemsByList[listId]?.firstIndex(where: { $0.id == itemId }),
+              let stored = itemsByList[listId]?[index] else { return }
+        itemsByList[listId]?[index] = patch.applied(to: stored)
         persist()
         publishItems(for: listId)
     }
@@ -485,15 +507,43 @@ final class FirestoreShoppingListService: ShoppingListServiceProtocol {
         try itemsCollection(listId).document(item.id).setData(from: item)
     }
 
-    /// `updateData` fails on a deleted document instead of creating it. Like `setData(from:)` it
-    /// doesn't wait for the server; a rejected update is rolled back in the local cache.
-    func update(item: GroceryItem, listId: String) async throws {
-        var fields = try Firestore.Encoder().encode(item)
-        // The encoder leaves out a nil completedBy, which would keep the stored one.
-        if item.completedBy == nil {
-            fields["completedBy"] = FieldValue.delete()
+    /// Metadata-only snapshots carry `hasPendingWrites`, which turns false once the server has
+    /// confirmed every local change. Errors end the stream quietly: the items stream reports them.
+    func observeSyncStatus(listId: String) -> AsyncStream<SyncStatus> {
+        AsyncStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
+            var last: SyncStatus?
+            let registration = itemsCollection(listId).addSnapshotListener(includeMetadataChanges: true) { snapshot, error in
+                guard let snapshot, error == nil else {
+                    continuation.finish()
+                    return
+                }
+                let status = SyncStatus(hasPendingWrites: snapshot.metadata.hasPendingWrites)
+                guard status != last else { return }
+                last = status
+                continuation.yield(status)
+            }
+            continuation.onTermination = { _ in registration.remove() }
         }
-        updateWithoutWaiting(itemsCollection(listId).document(item.id), fields)
+    }
+
+    /// `updateData` fails on a deleted document instead of creating it, and changes only the given
+    /// fields. Like `setData(from:)` it doesn't wait for the server; a rejected update is rolled
+    /// back in the local cache.
+    func update(itemId: String, patch: ItemPatch, listId: String) async throws {
+        updateWithoutWaiting(itemsCollection(listId).document(itemId), Self.firestoreFields(for: patch))
+    }
+
+    /// The document fields a patch writes: only the ones it changes, plus `updatedAt`.
+    static func firestoreFields(for patch: ItemPatch) -> [String: Any] {
+        var fields: [String: Any] = ["updatedAt": Timestamp(date: patch.updatedAt)]
+        if let title = patch.title { fields["title"] = title }
+        if let notes = patch.notes { fields["notes"] = notes }
+        if let aisle = patch.aisle { fields["aisle"] = aisle }
+        if let completion = patch.completion {
+            fields["isCompleted"] = completion.isCompleted
+            fields["completedBy"] = completion.completedBy ?? FieldValue.delete()
+        }
+        return fields
     }
 
     /// Outside an async function, `updateData` resolves to the call that doesn't wait for the server.
@@ -502,7 +552,14 @@ final class FirestoreShoppingListService: ShoppingListServiceProtocol {
     }
 
     func delete(itemId: String, listId: String) async throws {
-        try await itemsCollection(listId).document(itemId).delete()
+        deleteWithoutWaiting(itemsCollection(listId).document(itemId))
+    }
+
+    /// The awaiting `delete()` finishes only when the server confirms, so offline it would hold up
+    /// the next delete (and the deleted item would come back from the cache meanwhile). This one
+    /// queues it in the local cache, like the other writes.
+    private func deleteWithoutWaiting(_ document: DocumentReference) {
+        document.delete()
     }
 
     // MARK: - Preferences

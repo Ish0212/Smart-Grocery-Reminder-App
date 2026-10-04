@@ -46,7 +46,16 @@ final class AppState: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     /// Cleared once a session starts, so a late restore can't replace a manual sign-in.
     private var canRestoreSession = true
-    private var itemsSyncTask: Task<Void, Never>?
+    private var itemsSyncTask: Task<Void, Never>? {
+        // The unsynced notice belongs to the list being observed; a new list (or none) starts clean.
+        didSet { stopSyncStatus() }
+    }
+    private var syncStatusTask: Task<Void, Never>?
+    private var unsyncedNoticeTask: Task<Void, Never>?
+    /// Changes on this device have waited at least `unsyncedNoticeDelay` for the server, e.g. offline.
+    @Published private(set) var hasUnsyncedChanges = false
+    /// Online, a change waits for the server only for a moment; showing the notice then would flicker.
+    var unsyncedNoticeDelay: TimeInterval = 2
     private var activeListTask: Task<Void, Never>?
     private var preferencesSyncTask: Task<Void, Never>?
     /// True while `switchList` waits on a join or leave. A join's new list can be denied for a moment
@@ -793,7 +802,35 @@ final class AppState: ObservableObject {
                 }
             }
         }
+        observeSyncStatus(of: listId)
         Task { await refreshSharedList() }
+    }
+
+    private func observeSyncStatus(of listId: String) {
+        syncStatusTask = Task { [weak self, listService] in
+            for await status in await listService.observeSyncStatus(listId: listId) {
+                guard !Task.isCancelled, let self else { return }
+                self.unsyncedNoticeTask?.cancel()
+                guard status.hasPendingWrites else {
+                    self.hasUnsyncedChanges = false
+                    continue
+                }
+                let delay = self.unsyncedNoticeDelay
+                self.unsyncedNoticeTask = Task { [weak self] in
+                    try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                    guard !Task.isCancelled else { return }
+                    self?.hasUnsyncedChanges = true
+                }
+            }
+        }
+    }
+
+    private func stopSyncStatus() {
+        syncStatusTask?.cancel()
+        unsyncedNoticeTask?.cancel()
+        syncStatusTask = nil
+        unsyncedNoticeTask = nil
+        hasUnsyncedChanges = false
     }
 
     /// The owner removed this user from their list (or deleted it): the listener is denied, and
@@ -887,12 +924,32 @@ final class AppState: ObservableObject {
 
     func toggleItem(_ item: GroceryItem) async {
         guard let index = shoppingList.firstIndex(where: { $0.id == item.id }) else { return }
-        shoppingList[index].isCompleted.toggle()
-        shoppingList[index].completedBy = shoppingList[index].isCompleted ? currentUser?.id : nil
-        shoppingList[index].updatedAt = Date()
+        let checked = !shoppingList[index].isCompleted
+        // Only the completion is sent, so a rename someone made meanwhile isn't overwritten.
+        let patch = ItemPatch(
+            completion: .init(isCompleted: checked, completedBy: checked ? currentUser?.id : nil),
+            updatedAt: Date()
+        )
+        shoppingList[index] = patch.applied(to: shoppingList[index])
         guard let listId = editableListId else { return }
         // An update, not an upsert: if someone else deleted the item meanwhile, it stays deleted.
-        try? await listService.update(item: shoppingList[index], listId: listId)
+        try? await listService.update(itemId: item.id, patch: patch, listId: listId)
+    }
+
+    /// Saves an edit to the item's name, notes or aisle. `item` is the copy the editor opened: only
+    /// fields changed from it are sent, so a check-off or rename someone made meanwhile isn't
+    /// overwritten. An empty name is ignored, and so is an item deleted meanwhile.
+    func editItem(_ item: GroceryItem, title: String, notes: String, aisle: String) async {
+        let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty, let index = shoppingList.firstIndex(where: { $0.id == item.id }) else { return }
+        var edited = item
+        edited.title = title
+        edited.notes = notes
+        edited.aisle = aisle
+        guard let patch = ItemPatch.changes(from: item, to: edited, at: Date()) else { return }
+        shoppingList[index] = patch.applied(to: shoppingList[index])
+        guard let listId = editableListId else { return }
+        try? await listService.update(itemId: item.id, patch: patch, listId: listId)
     }
 
     func deleteItems(at offsets: IndexSet) async {

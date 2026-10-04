@@ -57,6 +57,29 @@ The suite found two bugs: when iOS refused to monitor a place, Reminder health k
 watched; and an enter iOS reported twice within moments sent two unload reminders, because the
 second was decided before the first had recorded its cooldown.
 
+## Offline editing and conflicts
+
+Edits are written to Firestore's local cache first, so the list works offline and changes sync
+when the phone reconnects. If a change has waited more than 2 seconds for the server, the list
+says "Saved on this iPhone. It will sync when you're back online."
+
+An edit sends only the fields it changed (`ItemPatch`), never the whole item. So when family
+members edit the same item offline, their changes merge field by field instead of the last one
+overwriting everything:
+
+| Situation | Outcome |
+|---|---|
+| Two people change different fields (one renames it, one checks it off) | Both changes survive |
+| Two people change the same field | The last write to reach the server wins |
+| One person deletes an item, another edits it | It stays deleted |
+| Two people check off the same item | It stays checked off, credited to whoever synced last, so a check-off made offline can take over someone else's unload reminder |
+
+What the tests prove: the app sends patches containing only the fields that changed
+(`ItemPatchTests`, `ConflictReliabilityTests`); the demo backend merges them field by field;
+and the security rules accept a partial update that leaves another member's `completedBy` alone
+(`firestore-tests`). Merging per field on the server is Firestore's documented `updateData`
+behaviour, which the suite relies on rather than exercises.
+
 ## Quick start (Mac)
 
 ### Option A — XcodeGen (recommended)

@@ -137,9 +137,29 @@ describe("list items", () => {
     await assertFails(updateDoc(doc(as("bob"), "lists/alice/items/item-1"), { completedBy: "carol" }));
     await assertSucceeds(updateDoc(doc(as("bob"), "lists/alice/items/item-1"), { completedBy: deleteField() }));
 
-    // Unchecking it the way the app does: the whole item, without completedBy.
+    // Unchecking it the way older app versions do: the whole item, without completedBy.
     await seed("lists/alice/items/item-1", item({ isCompleted: true, completedBy: "alice" }));
     await assertSucceeds(setDoc(doc(as("bob"), "lists/alice/items/item-1"), item({ isCompleted: false })));
+  });
+
+  test("an edit can send only the fields it changes, leaving the rest as they are", async () => {
+    // alice checked it off; bob renames it, as ItemPatch sends it: title and updatedAt only.
+    await seed("lists/alice/items/item-1", item({ isCompleted: true, completedBy: "alice" }));
+    await assertSucceeds(updateDoc(doc(as("bob"), "lists/alice/items/item-1"), { title: "Oat milk", updatedAt: Timestamp.now() }));
+    const renamed = (await getDoc(doc(as("bob"), "lists/alice/items/item-1"))).data();
+    if (renamed.title !== "Oat milk" || renamed.completedBy !== "alice" || renamed.isCompleted !== true) {
+      throw new Error(`a partial update changed other fields: ${JSON.stringify(renamed)}`);
+    }
+
+    // An uncheck as the app sends it: the completion fields and updatedAt.
+    await assertSucceeds(updateDoc(doc(as("bob"), "lists/alice/items/item-1"), {
+      isCompleted: false, completedBy: deleteField(), updatedAt: Timestamp.now(),
+    }));
+
+    // A partial update is still validated against the whole item.
+    await assertFails(updateDoc(doc(as("bob"), "lists/alice/items/item-1"), { title: "", updatedAt: Timestamp.now() }));
+    await assertFails(updateDoc(doc(as("bob"), "lists/alice/items/item-1"), { price: 2, updatedAt: Timestamp.now() }));
+    await assertFails(updateDoc(doc(as("carol"), "lists/alice/items/item-1"), { title: "Oat milk", updatedAt: Timestamp.now() }));
   });
 
   test("dates must be timestamps, and both are required", async () => {

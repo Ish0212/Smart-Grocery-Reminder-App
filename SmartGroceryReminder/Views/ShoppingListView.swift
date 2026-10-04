@@ -6,6 +6,7 @@ struct ShoppingListView: View {
     @State private var newTitle = ""
     @State private var newAisle = ""
     @State private var newNotes = ""
+    @State private var editing: GroceryItem?
 
     private var openItems: [GroceryItem] {
         appState.shoppingList.filter { !$0.isCompleted }
@@ -24,6 +25,12 @@ struct ShoppingListView: View {
                         .foregroundStyle(.orange)
                 }
 
+                if appState.hasUnsyncedChanges {
+                    Label("Saved on this iPhone. It will sync when you're back online.", systemImage: "icloud.slash")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+
                 if openItems.isEmpty && doneItems.isEmpty {
                     ContentUnavailableView(
                         "List is empty",
@@ -39,6 +46,7 @@ struct ShoppingListView: View {
                             GroceryRow(item: item) {
                                 Task { await appState.toggleItem(item) }
                             }
+                            .modifier(EditActions(item: item, editing: $editing))
                         }
                         .onDelete { offsets in
                             let ids = offsets.map { openItems[$0].id }
@@ -54,6 +62,7 @@ struct ShoppingListView: View {
                             GroceryRow(item: item) {
                                 Task { await appState.toggleItem(item) }
                             }
+                            .modifier(EditActions(item: item, editing: $editing))
                             .opacity(0.55)
                         }
                         .onDelete { offsets in
@@ -76,36 +85,116 @@ struct ShoppingListView: View {
                 }
             }
             .sheet(isPresented: $showingAdd) {
-                NavigationStack {
-                    Form {
-                        TextField("Item name", text: $newTitle)
-                        TextField("Aisle (optional)", text: $newAisle)
-                        TextField("Notes (optional)", text: $newNotes, axis: .vertical)
-                            .lineLimit(3...5)
-                    }
-                    .navigationTitle("New Item")
-                    .navigationBarTitleDisplayMode(.inline)
-                    .toolbar {
-                        ToolbarItem(placement: .cancellationAction) {
-                            Button("Cancel") { showingAdd = false }
-                        }
-                        ToolbarItem(placement: .confirmationAction) {
-                            Button("Add") {
-                                Task {
-                                    await appState.addItem(newTitle.trimmingCharacters(in: .whitespaces), notes: newNotes, aisle: newAisle)
-                                    newTitle = ""
-                                    newAisle = ""
-                                    newNotes = ""
-                                    showingAdd = false
-                                }
-                            }
-                            .disabled(newTitle.trimmingCharacters(in: .whitespaces).isEmpty)
+                ItemForm(
+                    navigationTitle: "New Item",
+                    confirmTitle: "Add",
+                    title: $newTitle,
+                    aisle: $newAisle,
+                    notes: $newNotes,
+                    onCancel: { showingAdd = false },
+                    onConfirm: {
+                        Task {
+                            await appState.addItem(newTitle.trimmingCharacters(in: .whitespaces), notes: newNotes, aisle: newAisle)
+                            newTitle = ""
+                            newAisle = ""
+                            newNotes = ""
+                            showingAdd = false
                         }
                     }
+                )
+            }
+            .sheet(item: $editing) { item in
+                ItemEditor(item: item) { title, notes, aisle in
+                    Task { await appState.editItem(item, title: title, notes: notes, aisle: aisle) }
                 }
-                .presentationDetents([.medium])
             }
         }
+    }
+}
+
+/// Swipe right, or long-press, to edit an item.
+private struct EditActions: ViewModifier {
+    let item: GroceryItem
+    @Binding var editing: GroceryItem?
+
+    func body(content: Content) -> some View {
+        content
+            .swipeActions(edge: .leading) {
+                Button("Edit") { editing = item }
+                    .tint(.blue)
+            }
+            .contextMenu {
+                Button {
+                    editing = item
+                } label: {
+                    Label("Edit", systemImage: "pencil")
+                }
+            }
+    }
+}
+
+/// The fields of an item, for adding one and for editing one.
+struct ItemForm: View {
+    let navigationTitle: String
+    let confirmTitle: String
+    @Binding var title: String
+    @Binding var aisle: String
+    @Binding var notes: String
+    let onCancel: () -> Void
+    let onConfirm: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                TextField("Item name", text: $title)
+                TextField("Aisle (optional)", text: $aisle)
+                TextField("Notes (optional)", text: $notes, axis: .vertical)
+                    .lineLimit(3...5)
+            }
+            .navigationTitle(navigationTitle)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel", action: onCancel)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(confirmTitle, action: onConfirm)
+                        .disabled(title.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+        }
+        .presentationDetents([.medium])
+    }
+}
+
+/// Edits a copy of the item; Save hands back the new name, aisle and notes.
+private struct ItemEditor: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var title: String
+    @State private var aisle: String
+    @State private var notes: String
+    let onSave: (_ title: String, _ notes: String, _ aisle: String) -> Void
+
+    init(item: GroceryItem, onSave: @escaping (_ title: String, _ notes: String, _ aisle: String) -> Void) {
+        _title = State(initialValue: item.title)
+        _aisle = State(initialValue: item.aisle)
+        _notes = State(initialValue: item.notes)
+        self.onSave = onSave
+    }
+
+    var body: some View {
+        ItemForm(
+            navigationTitle: "Edit Item",
+            confirmTitle: "Save",
+            title: $title,
+            aisle: $aisle,
+            notes: $notes,
+            onCancel: { dismiss() },
+            onConfirm: {
+                onSave(title, notes, aisle)
+                dismiss()
+            }
+        )
     }
 }
 
@@ -138,7 +227,7 @@ struct GroceryRow: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(item.title)\(item.isCompleted ? ", completed" : ", not completed")")
-        .accessibilityHint("Double tap to toggle completion")
+        .accessibilityHint("Double tap to toggle completion. Swipe right to edit.")
     }
 }
 

@@ -32,6 +32,10 @@ protocol AuthServiceProtocol {
     func sendPasswordReset(email: String) async throws
 }
 
+struct SyncStatus: Equatable, Sendable {
+    var hasPendingWrites: Bool
+}
+
 protocol ShoppingListServiceProtocol {
     /// Emits the ID of the list the user shops from (their own list's ID is their uid), from the
     /// local cache first, then again when they join or leave a list. The first time, it creates
@@ -41,9 +45,13 @@ protocol ShoppingListServiceProtocol {
     /// Fails with `SharedListError.removedFromList` when `userId` isn't (or stops being) a member.
     func observeItems(listId: String, userId: String) async -> AsyncThrowingStream<[GroceryItem], Error>
     func upsert(item: GroceryItem, listId: String) async throws
-    /// Changes an item only if it still exists, so an edit can't bring back one someone else deleted.
-    func update(item: GroceryItem, listId: String) async throws
+    /// Changes only the patched fields, and only if the item still exists, so an edit can't bring
+    /// back one someone else deleted or overwrite fields it didn't touch.
+    func update(itemId: String, patch: ItemPatch, listId: String) async throws
     func delete(itemId: String, listId: String) async throws
+    /// Whether this device has list changes the server hasn't confirmed yet (e.g. made offline).
+    /// Emits the current state, then again whenever it changes.
+    func observeSyncStatus(listId: String) async -> AsyncStream<SyncStatus>
     /// Emits the user's preferences once they are known, then again on every change.
     func observePreferences(userId: String) async -> AsyncThrowingStream<UserPreferences, Error>
     func savePreferences(_ preferences: UserPreferences, userId: String) async throws
