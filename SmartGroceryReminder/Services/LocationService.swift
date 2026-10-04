@@ -245,7 +245,10 @@ extension LocationService {
         diagnostics.record(.error, "Location fix failed: \(message)")
     }
 
+    /// iOS accepts a region, then reports here when it can't monitor it (e.g. over the 20-region
+    /// limit) and drops it. Recount, so Reminder health stops claiming the place is watched.
     func handleMonitoringFailure(identifier: String, message: String) {
+        systemRegionCount = currentRegions.count
         diagnostics.record(.error, "Couldn't monitor \(Self.describe(regionIdentifier: identifier)): \(message)")
     }
 
