@@ -23,7 +23,7 @@ final class ReceiptReviewModelTests: XCTestCase {
         let milk = GroceryItem(title: "Milk")
         let model = ReceiptReviewModel(recognizer: FakeRecognizer(lines: ["MILK 2% GAL 4.99", "AVOCADOS 2.50", "TOTAL 7.49"]))
 
-        await model.read(photo, openItems: [milk])
+        await model.read(photo, listItems: [milk])
 
         XCTAssertEqual(model.phase, .ready)
         XCTAssertEqual(model.rows.map(\.name), ["Milk 2% Gallon", "Avocados"])
@@ -36,7 +36,7 @@ final class ReceiptReviewModelTests: XCTestCase {
         let milk = GroceryItem(title: "Milk")
         let model = ReceiptReviewModel(recognizer: FakeRecognizer(lines: ["WHOLE MILK 3.49", "OAT MILK 4.49"]))
 
-        await model.read(photo, openItems: [milk])
+        await model.read(photo, listItems: [milk])
 
         XCTAssertEqual(model.rows.map(\.match), [milk, nil])
         XCTAssertEqual(model.decisions, [.checkOff(itemId: milk.id), .addBought(name: "Oat Milk")])
@@ -45,8 +45,8 @@ final class ReceiptReviewModelTests: XCTestCase {
     @MainActor
     func testCorrectionsAreWhatGetsApplied() async {
         let milk = GroceryItem(title: "Milk")
-        let model = ReceiptReviewModel(recognizer: FakeRecognizer(lines: ["MILK 4.99", "CHOC BAR 1.99", "BAG FEE 0.10"]))
-        await model.read(photo, openItems: [milk])
+        let model = ReceiptReviewModel(recognizer: FakeRecognizer(lines: ["MILK 4.99", "CHOC BAR 1.99", "ICE 2.99"]))
+        await model.read(photo, listItems: [milk])
 
         model.rows[0].action = .add
         model.rows[0].name = "Oat milk"
@@ -60,7 +60,7 @@ final class ReceiptReviewModelTests: XCTestCase {
     func testAReceiptWithNoPurchasesSaysSo() async {
         let model = ReceiptReviewModel(recognizer: FakeRecognizer(lines: ["THANK YOU", "TOTAL 0.00"]))
 
-        await model.read(photo, openItems: [])
+        await model.read(photo, listItems: [])
 
         XCTAssertEqual(model.phase, .empty)
         XCTAssertTrue(model.rows.isEmpty)
@@ -70,13 +70,36 @@ final class ReceiptReviewModelTests: XCTestCase {
     func testAPhotoThatCantBeReadSaysSo() async {
         struct VisionFailed: Error {}
         let failing = ReceiptReviewModel(recognizer: FakeRecognizer(error: VisionFailed()))
-        await failing.read(photo, openItems: [])
+        await failing.read(photo, listItems: [])
         XCTAssertEqual(failing.phase, .failed)
 
         let model = ReceiptReviewModel(recognizer: FakeRecognizer(lines: ["MILK 4.99"]))
-        await model.read(nil, openItems: [])
+        await model.read(nil, listItems: [])
         XCTAssertEqual(model.phase, .failed)
-        await model.read(UIImage(), openItems: [])
+        await model.read(UIImage(), listItems: [])
         XCTAssertEqual(model.phase, .failed)
+    }
+
+    @MainActor
+    func testScanningAReceiptAgainSkipsWhatsAlreadyBought() async {
+        let milk = GroceryItem(title: "Milk", isCompleted: true, completedBy: "u")
+        let avocados = GroceryItem(title: "Avocados", isCompleted: true, completedBy: "u")
+        let model = ReceiptReviewModel(recognizer: FakeRecognizer(lines: ["MILK 4.99", "AVOCADOS 2.50"]))
+
+        await model.read(photo, listItems: [milk, avocados])
+
+        XCTAssertEqual(model.rows.map(\.action), [.skip, .skip])
+        XCTAssertEqual(model.decisions, [.skip, .skip])
+    }
+
+    @MainActor
+    func testALooseMatchIsOfferedButNotCheckedOffByDefault() async {
+        let milk = GroceryItem(title: "Milk")
+        let model = ReceiptReviewModel(recognizer: FakeRecognizer(lines: ["MILK CHOC BAR 1.99"]))
+
+        await model.read(photo, listItems: [milk])
+
+        XCTAssertEqual(model.rows.first?.match, milk)
+        XCTAssertEqual(model.rows.first?.action, .add)
     }
 }

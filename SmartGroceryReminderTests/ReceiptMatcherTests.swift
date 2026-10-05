@@ -38,4 +38,16 @@ final class ReceiptMatcherTests: XCTestCase {
     func testAnEmptyListMatchesNothing() {
         XCTAssertNil(ReceiptMatcher.match(bought("Milk"), in: []))
     }
+
+    func testOnATieTheCloserNameWins() {
+        let chocolateMilk = GroceryItem(title: "Chocolate milk")
+        let milk = GroceryItem(title: "Milk")
+        XCTAssertEqual(ReceiptMatcher.match(bought("Milk"), in: [chocolateMilk, milk]), milk)
+    }
+
+    func testAMatchIsCloseOnlyWhenTheNamesAlmostAgree() {
+        XCTAssertTrue(ReceiptMatcher.isClose(bought("Large Brown Eggs"), to: GroceryItem(title: "Eggs")))
+        XCTAssertTrue(ReceiptMatcher.isClose(bought("Organic Bananas"), to: GroceryItem(title: "Banana")))
+        XCTAssertFalse(ReceiptMatcher.isClose(bought("Milk Choc Bar"), to: GroceryItem(title: "Milk")))
+    }
 }

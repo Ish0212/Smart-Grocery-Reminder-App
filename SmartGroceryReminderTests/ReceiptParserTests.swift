@@ -105,3 +105,19 @@ final class ReceiptTextTests: XCTestCase {
         XCTAssertEqual(lines, ["BREAD 2.49", "MILK 4.99"])
     }
 }
+
+final class ReceiptParserEdgeTests: XCTestCase {
+    func testFeesDepositsAndSavingsAreNotPurchases() {
+        let lines = ["YOU SAVED 1.50", "BOTTLE DEPOSIT 0.10", "BAG FEE 0.10", "EBT FOOD 23.45", "CRV 0.05"]
+        XCTAssertTrue(ReceiptParser.parse(lines: lines).isEmpty)
+    }
+
+    func testProductsNamedLikeReceiptWordsAreKept() {
+        let names = ReceiptParser.parse(lines: ["MEMBER'S MARK EGGS 5.98", "GREETING CARD 3.49", "CASHEW MIX 6.99"]).map(\.name)
+        XCTAssertEqual(names, ["Member's Mark Eggs", "Greeting Card", "Cashew Mix"])
+    }
+
+    func testAHeaderAboveAWeightLineWithoutAPriceIsNotAPurchase() {
+        XCTAssertTrue(ReceiptParser.parse(lines: ["PRODUCE", "2.04 lb @ 1.49 /lb"]).isEmpty)
+    }
+}
