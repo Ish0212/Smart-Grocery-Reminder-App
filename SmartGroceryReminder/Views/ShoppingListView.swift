@@ -9,6 +9,8 @@ struct ShoppingListView: View {
     @State private var newNotes = ""
     @State private var editing: GroceryItem?
     @State private var showingCamera = false
+    /// Held until the camera has closed: presenting the review sheet while it's still closing can fail.
+    @State private var cameraPhoto: UIImage?
     @State private var showingPhotoPicker = false
     @State private var pickedPhoto: PhotosPickerItem?
     @State private var scannedReceipt: ScannedReceipt?
@@ -138,17 +140,20 @@ struct ShoppingListView: View {
                     scannedReceipt = ScannedReceipt(image: data.flatMap(UIImage.init(data:)))
                 }
             }
-            .fullScreenCover(isPresented: $showingCamera) {
+            .fullScreenCover(isPresented: $showingCamera, onDismiss: {
+                if let photo = cameraPhoto {
+                    cameraPhoto = nil
+                    scannedReceipt = ScannedReceipt(image: photo)
+                }
+            }) {
                 CameraPicker { image in
+                    cameraPhoto = image
                     showingCamera = false
-                    if let image {
-                        scannedReceipt = ScannedReceipt(image: image)
-                    }
                 }
                 .ignoresSafeArea()
             }
             .sheet(item: $scannedReceipt) { receipt in
-                ReceiptReviewView(receipt: receipt, openItems: openItems) { decisions in
+                ReceiptReviewView(receipt: receipt, listItems: appState.shoppingList) { decisions in
                     Task { receiptResult = await appState.applyReceipt(decisions) }
                 }
             }

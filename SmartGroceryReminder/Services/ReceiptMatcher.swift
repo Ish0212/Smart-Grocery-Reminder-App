@@ -19,20 +19,29 @@ enum ReceiptMatcher {
             .filter { $0.count >= 2 && !stopWords.contains($0) })
     }
 
-    /// The best match among `open`: the most shared words, the earlier item on a tie.
-    static func match(_ item: ReceiptItem, in open: [GroceryItem]) -> GroceryItem? {
+    /// The best match among `items`: the most shared words, then the fewest words that differ
+    /// ("Milk" over "Chocolate milk" for MILK), then the earlier item.
+    static func match(_ item: ReceiptItem, in items: [GroceryItem]) -> GroceryItem? {
         let receiptWords = words(item.name)
         guard !receiptWords.isEmpty else { return nil }
-        var best: (item: GroceryItem, score: Int)?
-        for candidate in open {
+        var best: (item: GroceryItem, shared: Int, differing: Int)?
+        for candidate in items {
             let listWords = words(candidate.title)
             guard !listWords.isEmpty,
                   listWords.isSubset(of: receiptWords) || receiptWords.isSubset(of: listWords) else { continue }
-            let score = listWords.intersection(receiptWords).count
-            if score > (best?.score ?? 0) {
-                best = (candidate, score)
+            let shared = listWords.intersection(receiptWords).count
+            let differing = listWords.symmetricDifference(receiptWords).count
+            if let current = best, shared < current.shared || (shared == current.shared && differing >= current.differing) {
+                continue
             }
+            best = (candidate, shared, differing)
         }
         return best?.item
+    }
+
+    /// Whether the names agree closely enough to check the item off without asking: at most one
+    /// extra word on either side. "Large Brown Eggs" is Eggs; "Milk Choc Bar" only might be Milk.
+    static func isClose(_ item: ReceiptItem, to listItem: GroceryItem) -> Bool {
+        words(item.name).symmetricDifference(words(listItem.title)).count <= 1
     }
 }

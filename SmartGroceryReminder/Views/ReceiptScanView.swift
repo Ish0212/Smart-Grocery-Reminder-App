@@ -25,6 +25,8 @@ final class ReceiptReviewModel: ObservableObject {
         let quantity: Int
         /// The open list item this purchase is, if any.
         let match: GroceryItem?
+        /// A list item already checked off that this purchase is, e.g. on a second scan.
+        var alreadyBought: GroceryItem? = nil
         var action: Action
     }
 
@@ -36,8 +38,10 @@ final class ReceiptReviewModel: ObservableObject {
         self.recognizer = recognizer
     }
 
-    /// Each list item can be claimed by one receipt line only, the first in receipt order.
-    func read(_ image: UIImage?, openItems: [GroceryItem]) async {
+    /// Each list item can be claimed by one receipt line only, the first in receipt order. A line
+    /// matching something already checked off (e.g. the same receipt scanned again) is skipped by
+    /// default; a loose match is offered but defaults to adding.
+    func read(_ image: UIImage?, listItems: [GroceryItem]) async {
         phase = .reading
         rows = []
         guard let image, let cgImage = image.cgImage else {
@@ -51,13 +55,18 @@ final class ReceiptReviewModel: ObservableObject {
             phase = .failed
             return
         }
-        var unclaimed = openItems
+        var unclaimed = listItems.filter { !$0.isCompleted }
+        let bought = listItems.filter(\.isCompleted)
         rows = ReceiptParser.parse(lines: ReceiptText.lines(from: fragments)).map { item in
-            let match = ReceiptMatcher.match(item, in: unclaimed)
-            if let match {
+            if let match = ReceiptMatcher.match(item, in: unclaimed) {
                 unclaimed.removeAll { $0.id == match.id }
+                let action: Action = ReceiptMatcher.isClose(item, to: match) ? .checkOff : .add
+                return Row(name: item.name, price: item.price, quantity: item.quantity, match: match, action: action)
             }
-            return Row(name: item.name, price: item.price, quantity: item.quantity, match: match, action: match == nil ? .add : .checkOff)
+            if let done = ReceiptMatcher.match(item, in: bought), ReceiptMatcher.isClose(item, to: done) {
+                return Row(name: item.name, price: item.price, quantity: item.quantity, match: nil, alreadyBought: done, action: .skip)
+            }
+            return Row(name: item.name, price: item.price, quantity: item.quantity, match: nil, action: .add)
         }
         phase = rows.isEmpty ? .empty : .ready
     }
@@ -80,7 +89,7 @@ final class ReceiptReviewModel: ObservableObject {
 /// The purchases read from a receipt, each with what to do about it.
 struct ReceiptReviewView: View {
     let receipt: ScannedReceipt
-    let openItems: [GroceryItem]
+    let listItems: [GroceryItem]
     let onApply: ([ReceiptDecision]) -> Void
     @StateObject private var model = ReceiptReviewModel()
     @Environment(\.dismiss) private var dismiss
@@ -104,7 +113,7 @@ struct ReceiptReviewView: View {
                     }
                 }
         }
-        .task { await model.read(receipt.image, openItems: openItems) }
+        .task { await model.read(receipt.image, listItems: listItems) }
     }
 
     @ViewBuilder
@@ -158,7 +167,7 @@ private struct ReceiptRowEditor: View {
                     Text("Check off “\(match.title)”").tag(ReceiptReviewModel.Action.checkOff)
                 }
                 Text(row.quantity > 1 ? "Add as bought (×\(row.quantity))" : "Add as bought").tag(ReceiptReviewModel.Action.add)
-                Text("Skip").tag(ReceiptReviewModel.Action.skip)
+                Text(row.alreadyBought.map { "Skip (“\($0.title)” already bought)" } ?? "Skip").tag(ReceiptReviewModel.Action.skip)
             }
             .pickerStyle(.menu)
             .labelsHidden()

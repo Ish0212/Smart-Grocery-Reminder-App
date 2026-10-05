@@ -25,8 +25,9 @@ enum ReceiptParser {
 
             if let count = quantity(in: line) ?? (isWeight(line) ? 1 : nil) {
                 let found = price(in: line)
-                if let name = pendingName, found?.negative != true {
-                    add(ReceiptItem(name: name, price: found?.value, quantity: count), to: &items)
+                // Only with a price: a department header ("PRODUCE") above a weight line isn't an item.
+                if let name = pendingName, let found, !found.negative {
+                    add(ReceiptItem(name: name, price: found.value, quantity: count), to: &items)
                 } else if quantity(in: line) != nil, let last = items.indices.last {
                     items[last].quantity = count
                 }
@@ -62,15 +63,23 @@ enum ReceiptParser {
 
     // MARK: - Line patterns
 
-    private static let skipWords: Set<String> = [
+    /// Summary, payment and fee lines start or end with one of these ("TOTAL 31.03", "VISA ****
+    /// 1234", "BAG FEE 0.10", "YOU SAVED 1.50"). Only the first and last words are checked, so a
+    /// product that merely contains one ("GREETING CARD", "CASHEW MIX") is kept.
+    private static let leadingSkipWords: Set<String> = [
         "total", "subtotal", "tax", "balance", "change", "cash", "visa", "mastercard", "amex",
         "debit", "credit", "card", "tender", "due", "payment", "savings", "discount", "coupon",
-        "points", "auth", "approved", "member", "thank", "receipt",
+        "points", "auth", "approved", "thank", "receipt", "you", "ebt", "crv", "deposit", "refund",
+    ]
+    private static let trailingSkipWords: Set<String> = [
+        "total", "subtotal", "tax", "due", "change", "savings", "saved", "discount", "coupon",
+        "deposit", "fee", "refund", "crv",
     ]
 
     private static func hasSkipWord(_ line: String) -> Bool {
         let words = line.lowercased().split { !$0.isLetter }.map(String.init)
-        return words.contains { skipWords.contains($0) }
+        guard let first = words.first, let last = words.last else { return false }
+        return leadingSkipWords.contains(first) || trailingSkipWords.contains(last)
     }
 
     /// `name  [-]$1,29[-] [F]` at the end of the line. A minus on either side marks a discount.
