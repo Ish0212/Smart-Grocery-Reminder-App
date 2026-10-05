@@ -952,6 +952,40 @@ final class AppState: ObservableObject {
         try? await listService.update(itemId: item.id, patch: patch, listId: listId)
     }
 
+    /// Applies the reviewed lines of a scanned receipt: matched list items are checked off as bought
+    /// by this user (never un-checked, so scanning the same receipt twice is safe for them), and
+    /// other purchases are added as already bought, so the unload reminder counts them too.
+    @discardableResult
+    func applyReceipt(_ decisions: [ReceiptDecision]) async -> ReceiptResult {
+        var result = ReceiptResult()
+        let now = Date()
+        for decision in decisions {
+            switch decision {
+            case .checkOff(let itemId):
+                guard let index = shoppingList.firstIndex(where: { $0.id == itemId }),
+                      !shoppingList[index].isCompleted else { continue }
+                let patch = ItemPatch(completion: .init(isCompleted: true, completedBy: currentUser?.id), updatedAt: now)
+                shoppingList[index] = patch.applied(to: shoppingList[index])
+                result.checkedOff += 1
+                if let listId = editableListId {
+                    try? await listService.update(itemId: itemId, patch: patch, listId: listId)
+                }
+            case .addBought(let rawName):
+                let name = String(rawName.trimmingCharacters(in: .whitespacesAndNewlines).prefix(500))
+                guard !name.isEmpty else { continue }
+                let item = GroceryItem(title: name, isCompleted: true, completedBy: currentUser?.id, createdAt: now, updatedAt: now)
+                shoppingList.insert(item, at: 0)
+                result.added += 1
+                if let listId = editableListId {
+                    try? await listService.upsert(item: item, listId: listId)
+                }
+            case .skip:
+                continue
+            }
+        }
+        return result
+    }
+
     func deleteItems(at offsets: IndexSet) async {
         let removed = offsets.map { shoppingList[$0] }
         shoppingList.remove(atOffsets: offsets)

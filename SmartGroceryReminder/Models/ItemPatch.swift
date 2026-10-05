@@ -55,3 +55,15 @@ struct ItemPatch: Equatable {
         return result
     }
 }
+
+/// What to do with one reviewed line of a scanned receipt.
+enum ReceiptDecision: Equatable {
+    case checkOff(itemId: String)
+    case addBought(name: String)
+    case skip
+}
+
+struct ReceiptResult: Equatable {
+    var checkedOff = 0
+    var added = 0
+}

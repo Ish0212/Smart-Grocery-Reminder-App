@@ -80,6 +80,25 @@ and the security rules accept a partial update that leaves another member's `com
 (`firestore-tests`). Merging per field on the server is Firestore's documented `updateData`
 behaviour, which the suite relies on rather than exercises.
 
+## Receipt scanning
+
+The scan button on the list (top left) takes or chooses a photo of a receipt. The app reads it on
+the device, shows what it found for you to correct, then checks off the matching list items and
+adds the other purchases as already bought. Both count as bought by you, so the unload reminder
+at home knows what's in the car.
+
+| Stage | Code | What it does |
+|---|---|---|
+| Recognize | `VisionTextRecognizer` | Vision's `VNRecognizeTextRequest` (accurate, no language correction), off the main actor, with the photo's EXIF orientation so portrait photos aren't read sideways |
+| Lines | `ReceiptText` | Joins name and price fragments that sit at the same height (within half a text height) into one line, top to bottom |
+| Parse | `ReceiptParser` | Item lines end in a price (`$`, comma decimals and tax flags allowed); total, tax, payment and coupon lines and discounts are skipped; `2 @ 1.99` and weight lines refine the item above; SKUs and size codes are dropped; abbreviations (`ORG`, `BNLS`, `CHKN`…) are spelled out; repeated items merge |
+| Match | `ReceiptMatcher` | A list item matches when all its significant words are in the purchase's name, or the other way round (plurals and words like "organic" ignored); the most shared words win, and each list item is claimed once |
+
+Scanning the same receipt twice leaves checked-off items as they are but adds the unmatched
+purchases again. The tests run Vision for real in the simulator (`VisionTextRecognizerTests`,
+including a sideways-stored portrait photo) and the parser on a full sample receipt
+(`ReceiptParserTests`).
+
 ## Quick start (Mac)
 
 ### Option A — XcodeGen (recommended)
@@ -190,6 +209,7 @@ The Info.plist requests:
 - **When In Use** + **Always** location (geofences for stores & home)
 - No location background mode: iOS region monitoring relaunches the app when a geofence is crossed
 - Notification permission at runtime after sign-in
+- Camera, only when you choose Take Photo to scan a receipt (choosing a photo needs no permission)
 
 The App Store privacy answers are in [docs/app-store/privacy-label.md](docs/app-store/privacy-label.md) and match `SmartGroceryReminder/PrivacyInfo.xcprivacy`.
 
