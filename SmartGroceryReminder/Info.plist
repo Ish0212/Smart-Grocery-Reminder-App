@@ -35,6 +35,8 @@
 	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>Take a photo of a receipt to check off what you bought. The photo stays on your iPhone.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>Smart Grocery Reminder uses your location to detect grocery stores and home arrival so it can remind you about your list and unloading the car.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>

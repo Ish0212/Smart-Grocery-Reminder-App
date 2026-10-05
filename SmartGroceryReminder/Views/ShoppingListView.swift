@@ -1,4 +1,5 @@
 import SwiftUI
+import PhotosUI
 
 struct ShoppingListView: View {
     @EnvironmentObject private var appState: AppState
@@ -7,6 +8,11 @@ struct ShoppingListView: View {
     @State private var newAisle = ""
     @State private var newNotes = ""
     @State private var editing: GroceryItem?
+    @State private var showingCamera = false
+    @State private var showingPhotoPicker = false
+    @State private var pickedPhoto: PhotosPickerItem?
+    @State private var scannedReceipt: ScannedReceipt?
+    @State private var receiptResult: ReceiptResult?
 
     private var openItems: [GroceryItem] {
         appState.shoppingList.filter { !$0.isCompleted }
@@ -75,6 +81,25 @@ struct ShoppingListView: View {
             }
             .navigationTitle("Grocery List")
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Menu {
+                        if CameraPicker.isAvailable {
+                            Button {
+                                showingCamera = true
+                            } label: {
+                                Label("Take Photo", systemImage: "camera")
+                            }
+                        }
+                        Button {
+                            showingPhotoPicker = true
+                        } label: {
+                            Label("Choose Photo", systemImage: "photo")
+                        }
+                    } label: {
+                        Image(systemName: "doc.text.viewfinder")
+                    }
+                    .accessibilityLabel("Scan Receipt")
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         showingAdd = true
@@ -102,6 +127,39 @@ struct ShoppingListView: View {
                         }
                     }
                 )
+            }
+            .photosPicker(isPresented: $showingPhotoPicker, selection: $pickedPhoto, matching: .images)
+            .onChange(of: pickedPhoto) { _, item in
+                guard let item else { return }
+                pickedPhoto = nil
+                Task {
+                    // A photo that can't be loaded or decoded shows the review sheet's "couldn't read" state.
+                    let data = try? await item.loadTransferable(type: Data.self)
+                    scannedReceipt = ScannedReceipt(image: data.flatMap(UIImage.init(data:)))
+                }
+            }
+            .fullScreenCover(isPresented: $showingCamera) {
+                CameraPicker { image in
+                    showingCamera = false
+                    if let image {
+                        scannedReceipt = ScannedReceipt(image: image)
+                    }
+                }
+                .ignoresSafeArea()
+            }
+            .sheet(item: $scannedReceipt) { receipt in
+                ReceiptReviewView(receipt: receipt, openItems: openItems) { decisions in
+                    Task { receiptResult = await appState.applyReceipt(decisions) }
+                }
+            }
+            .alert(
+                "Receipt applied",
+                isPresented: Binding(get: { receiptResult != nil }, set: { if !$0 { receiptResult = nil } }),
+                presenting: receiptResult
+            ) { _ in
+                Button("OK") {}
+            } message: { result in
+                Text("Checked off \(result.checkedOff), added \(result.added) as bought.")
             }
             .sheet(item: $editing) { item in
                 ItemEditor(item: item) { title, notes, aisle in
