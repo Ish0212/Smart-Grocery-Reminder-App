@@ -6,9 +6,14 @@ import android.content.Intent
 import com.google.android.gms.location.Geofence
 import com.google.android.gms.location.GeofencingRequest
 import com.google.android.gms.location.LocationServices
+import com.smartgrocery.reminder.widget.GroceryWidget
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 
 /**
  * Saved places, the arrival countdown and the geofences that watch the places. Everything is kept on
@@ -20,6 +25,8 @@ class ReminderStore(private val context: Context) {
     private val geofencing by lazy { LocationServices.getGeofencingClient(context) }
 
     val diagnostics = DiagnosticsLog(prefs)
+
+    private val widgetScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     private val _places = MutableStateFlow(Place.decodeAll(prefs.getString(KEY_PLACES, "").orEmpty()))
     val places: StateFlow<List<Place>> = _places.asStateFlow()
@@ -62,11 +69,15 @@ class ReminderStore(private val context: Context) {
         prefs.edit().putInt(KEY_UNLOAD_MINUTES, minutes).apply()
     }
 
-    /** The open-item count, written by the app so the receivers can say how many are left. */
-    fun openItemCount(): Int = prefs.getInt(KEY_OPEN_ITEMS, 0)
+    /** The open list items, saved by the app so the widget and the receivers can show them. */
+    fun openItemTitles(): List<String> =
+        prefs.getString(KEY_OPEN_TITLES, "").orEmpty().split(RECORD).filter { it.isNotEmpty() }
 
-    fun setOpenItemCount(count: Int) {
-        prefs.edit().putInt(KEY_OPEN_ITEMS, count).apply()
+    fun openItemCount(): Int = openItemTitles().size
+
+    fun setOpenItemTitles(titles: List<String>) {
+        prefs.edit().putString(KEY_OPEN_TITLES, titles.joinToString(RECORD)).apply()
+        refreshWidget()
     }
 
     fun lastFiredAt(placeId: String): Long = prefs.getLong("fired_$placeId", 0L)
@@ -93,6 +104,7 @@ class ReminderStore(private val context: Context) {
     fun clearCountdown() {
         _countdown.value = null
         prefs.edit().remove(KEY_ENDS_AT).remove(KEY_DURATION).apply()
+        refreshWidget()
     }
 
     private fun startCountdown(countdown: ArrivalCountdown) {
@@ -102,6 +114,11 @@ class ReminderStore(private val context: Context) {
             .putLong(KEY_DURATION, countdown.durationMillis)
             .apply()
         UnloadWorker.schedule(context, countdown.endsAtMillis)
+        refreshWidget()
+    }
+
+    private fun refreshWidget() {
+        widgetScope.launch { GroceryWidget().updateAll(context) }
     }
 
     private fun loadCountdown(): ArrivalCountdown? {
@@ -133,6 +150,7 @@ class ReminderStore(private val context: Context) {
         private const val KEY_ENDS_AT = "countdown_ends_at"
         private const val KEY_DURATION = "countdown_duration"
         private const val KEY_UNLOAD_MINUTES = "unload_minutes"
-        private const val KEY_OPEN_ITEMS = "open_items"
+        private const val KEY_OPEN_TITLES = "open_titles"
+        private const val RECORD = ""
     }
 }

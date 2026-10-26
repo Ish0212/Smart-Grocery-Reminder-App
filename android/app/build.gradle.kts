@@ -59,6 +59,7 @@ dependencies {
     implementation(libs.play.services.location)
     implementation(libs.places)
     implementation(libs.mlkit.text.recognition)
+    implementation(libs.glance.appwidget)
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.material.icons.extended)
