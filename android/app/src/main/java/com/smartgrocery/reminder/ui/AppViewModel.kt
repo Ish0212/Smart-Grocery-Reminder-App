@@ -9,6 +9,7 @@ import com.smartgrocery.reminder.data.ListSnapshot
 import com.smartgrocery.reminder.data.ShoppingListRepository
 import com.smartgrocery.reminder.model.GroceryItem
 import com.smartgrocery.reminder.model.ItemPatch
+import com.smartgrocery.reminder.reminders.ReminderStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -38,6 +39,15 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     val list: StateFlow<ListSnapshot> = lists
         .flatMapLatest { repository -> repository?.observe() ?: flowOf(ListSnapshot.Empty) }
         .stateIn(scope, SharingStarted.Eagerly, ListSnapshot.Empty)
+
+    val reminders: ReminderStore get() = container.reminders
+
+    init {
+        // The receivers read the open count to say how many items are left at a store.
+        scope.launch {
+            list.collect { snapshot -> reminders.setOpenItemCount(snapshot.items.count { !it.isCompleted }) }
+        }
+    }
 
     private val _authError = MutableStateFlow<String?>(null)
     val authError: StateFlow<String?> = _authError.asStateFlow()
