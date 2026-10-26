@@ -1,0 +1,12 @@
+# Gradle and Android Studio
+.gradle/
+.kotlin/
+build/
+local.properties
+.idea/
+*.iml
+*.apk
+*.aab
+
+# Firebase config is per-developer and never committed
+google-services.json
