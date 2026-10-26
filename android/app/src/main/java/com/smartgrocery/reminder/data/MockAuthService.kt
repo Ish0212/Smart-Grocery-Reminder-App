@@ -45,4 +45,10 @@ class MockAuthService : AuthService {
     override suspend fun signOut() {
         signedIn.value = null
     }
+
+    override suspend fun deleteAccount() {
+        val email = signedIn.value?.email ?: return
+        accounts.remove(email)
+        signedIn.value = null
+    }
 }

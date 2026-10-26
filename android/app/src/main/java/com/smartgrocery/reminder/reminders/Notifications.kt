@@ -67,6 +67,11 @@ object Notifications {
         NotificationManagerCompat.from(context).cancel(ID_UNLOAD)
     }
 
+    fun canPost(context: Context): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
+
     private fun actionIntent(context: Context, action: String, requestCode: Int): PendingIntent =
         PendingIntent.getBroadcast(
             context,
@@ -77,12 +82,7 @@ object Notifications {
 
     @SuppressLint("MissingPermission")
     private fun post(context: Context, id: Int, notification: android.app.Notification) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
-            PackageManager.PERMISSION_GRANTED
-        ) {
-            return
-        }
+        if (!canPost(context)) return
         NotificationManagerCompat.from(context).notify(id, notification)
     }
 }

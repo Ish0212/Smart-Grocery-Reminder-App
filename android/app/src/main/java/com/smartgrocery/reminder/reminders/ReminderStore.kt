@@ -19,6 +19,8 @@ class ReminderStore(private val context: Context) {
     private val prefs = context.getSharedPreferences("reminders", Context.MODE_PRIVATE)
     private val geofencing by lazy { LocationServices.getGeofencingClient(context) }
 
+    val diagnostics = DiagnosticsLog(prefs)
+
     private val _places = MutableStateFlow(Place.decodeAll(prefs.getString(KEY_PLACES, "").orEmpty()))
     val places: StateFlow<List<Place>> = _places.asStateFlow()
 
@@ -47,8 +49,10 @@ class ReminderStore(private val context: Context) {
                 .build()
             try {
                 geofencing.addGeofences(request, pendingIntent)
+                    .addOnSuccessListener { diagnostics.log("Watching ${watched.size} places") }
+                    .addOnFailureListener { diagnostics.log("Geofences not registered: ${it.message}") }
             } catch (error: SecurityException) {
-                // Location permission isn't granted yet. The Places screen asks for it.
+                diagnostics.log("Geofences not registered: location permission is missing")
             }
         }
     }

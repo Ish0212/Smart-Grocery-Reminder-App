@@ -1,8 +1,15 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
 }
+
+// Google Maps / Places key. Put MAPS_API_KEY=... in android/local.properties (gitignored); blank disables place search.
+val mapsApiKey: String = Properties().apply {
+    rootProject.file("local.properties").takeIf { it.exists() }?.inputStream()?.use { load(it) }
+}.getProperty("MAPS_API_KEY", "")
 
 // Firebase is used only when google-services.json is present (it is gitignored, so CI and
 // forks build against the in-memory demo backend). BuildConfig.USE_FIREBASE follows it.
@@ -22,6 +29,8 @@ android {
         versionCode = 1
         versionName = "0.2.0"
         buildConfigField("boolean", "USE_FIREBASE", "$hasGoogleServices")
+        buildConfigField("String", "MAPS_API_KEY", "\"$mapsApiKey\"")
+        manifestPlaceholders["mapsApiKey"] = mapsApiKey
     }
 
     buildTypes {
@@ -48,6 +57,7 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.work.runtime)
     implementation(libs.play.services.location)
+    implementation(libs.places)
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.material.icons.extended)

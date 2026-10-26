@@ -38,6 +38,10 @@ class FirebaseAuthService(private val auth: FirebaseAuth) : AuthService {
         auth.signOut()
     }
 
+    override suspend fun deleteAccount() {
+        auth.currentUser?.delete()?.await()
+    }
+
     private fun FirebaseUser.toAuthUser() = AuthUser(
         uid = uid,
         email = email.orEmpty(),
