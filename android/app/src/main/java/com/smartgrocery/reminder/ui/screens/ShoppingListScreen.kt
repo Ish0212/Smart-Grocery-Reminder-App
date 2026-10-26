@@ -60,6 +60,9 @@ fun ShoppingListScreen(viewModel: AppViewModel) {
             item {
                 Text("Grocery List", style = MaterialTheme.typography.headlineMedium)
             }
+            item {
+                ReceiptScanControls(viewModel)
+            }
             if (snapshot.savedOnDevice) {
                 item {
                     Text(

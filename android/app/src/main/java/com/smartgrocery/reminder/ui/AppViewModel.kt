@@ -9,6 +9,9 @@ import com.smartgrocery.reminder.data.ListSnapshot
 import com.smartgrocery.reminder.data.ShoppingListRepository
 import com.smartgrocery.reminder.model.GroceryItem
 import com.smartgrocery.reminder.model.ItemPatch
+import com.smartgrocery.reminder.receipt.ReceiptApplier
+import com.smartgrocery.reminder.receipt.ReceiptChange
+import com.smartgrocery.reminder.receipt.ReceiptItem
 import com.smartgrocery.reminder.reminders.ReminderStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -93,6 +96,28 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
 
     fun delete(id: String) = listAction {
         lists.value?.delete(id)
+    }
+
+    /** Checks off the open items the receipt bought and adds the rest as already bought. */
+    fun applyReceipt(purchases: List<ReceiptItem>) = listAction {
+        val uid = user.value?.uid ?: return@listAction
+        val repository = lists.value ?: return@listAction
+        val items = list.value.items
+        for (change in ReceiptApplier.plan(purchases, items)) {
+            when (change) {
+                is ReceiptChange.CheckOff -> {
+                    val item = items.first { it.id == change.itemId }
+                    repository.update(item.id, ItemPatch.toggle(item, uid))
+                }
+                is ReceiptChange.AddBought -> repository.add(
+                    ItemDraft(
+                        title = change.title,
+                        notes = if (change.quantity > 1) "x${change.quantity}" else "",
+                        completedBy = uid,
+                    ),
+                )
+            }
+        }
     }
 
     private fun authAction(block: suspend () -> Unit) {

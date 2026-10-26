@@ -23,6 +23,8 @@ class MockShoppingListRepository(initial: List<GroceryItem> = SampleData.grocery
             title = draft.title,
             aisle = draft.aisle,
             notes = draft.notes,
+            isCompleted = draft.completedBy != null,
+            completedBy = draft.completedBy,
             createdAt = now,
             updatedAt = now,
         )
