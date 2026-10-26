@@ -11,7 +11,6 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
-import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -27,11 +26,8 @@ class ScreenshotTest {
     @get:Rule
     val composeRule = createAndroidComposeRule<MainActivity>()
 
-    private val folder: File by lazy {
-        InstrumentationRegistry.getInstrumentation().targetContext
-            .getExternalFilesDir("screenshots")!!
-            .apply { mkdirs() }
-    }
+    // World-writable on the emulator, and readable by adb: the app's own folders aren't on Android 11+.
+    private val folder: File = File("/data/local/tmp/screenshots").apply { mkdirs() }
 
     @Test
     fun captureScreens() {
@@ -49,7 +45,7 @@ class ScreenshotTest {
         capture("4-Settings")
     }
 
-    /** Captured from the app's own process, so the file lands in the folder the workflow pulls from. */
+    /** Captured from the app's own process, into the folder the workflow pulls from. */
     private fun capture(name: String) {
         composeRule.waitForIdle()
         val bitmap = composeRule.onRoot().captureToImage().asAndroidBitmap()
