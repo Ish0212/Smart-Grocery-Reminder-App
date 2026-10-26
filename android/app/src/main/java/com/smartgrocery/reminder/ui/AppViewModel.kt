@@ -1,0 +1,112 @@
+package com.smartgrocery.reminder.ui
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import com.smartgrocery.reminder.AppContainer
+import com.smartgrocery.reminder.data.AuthUser
+import com.smartgrocery.reminder.data.ItemDraft
+import com.smartgrocery.reminder.data.ListSnapshot
+import com.smartgrocery.reminder.data.ShoppingListRepository
+import com.smartgrocery.reminder.model.GroceryItem
+import com.smartgrocery.reminder.model.ItemPatch
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+
+class AppViewModel(private val container: AppContainer) : ViewModel() {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
+    val usesFirebase: Boolean get() = container.useFirebase
+
+    val user: StateFlow<AuthUser?> = container.auth.user
+        .stateIn(scope, SharingStarted.Eagerly, container.auth.currentUser)
+
+    private val lists: StateFlow<ShoppingListRepository?> = user
+        .map { it?.let { signedIn -> container.listsFor(signedIn.uid) } }
+        .stateIn(scope, SharingStarted.Eagerly, user.value?.let { container.listsFor(it.uid) })
+
+    val list: StateFlow<ListSnapshot> = lists
+        .flatMapLatest { repository -> repository?.observe() ?: flowOf(ListSnapshot.Empty) }
+        .stateIn(scope, SharingStarted.Eagerly, ListSnapshot.Empty)
+
+    private val _authError = MutableStateFlow<String?>(null)
+    val authError: StateFlow<String?> = _authError.asStateFlow()
+
+    private val _listError = MutableStateFlow<String?>(null)
+    val listError: StateFlow<String?> = _listError.asStateFlow()
+
+    fun signIn(email: String, password: String) = authAction {
+        container.auth.signIn(email, password)
+    }
+
+    fun signUp(email: String, password: String, displayName: String) = authAction {
+        container.auth.signUp(email, password, displayName)
+    }
+
+    fun sendPasswordReset(email: String, onSent: () -> Unit) = authAction {
+        container.auth.sendPasswordReset(email)
+        onSent()
+    }
+
+    fun signOut() {
+        scope.launch { container.auth.signOut() }
+    }
+
+    fun addItem(draft: ItemDraft) = listAction {
+        lists.value?.add(draft)
+    }
+
+    fun saveEdit(id: String, draft: ItemDraft) = listAction {
+        lists.value?.update(id, ItemPatch(title = draft.title, aisle = draft.aisle, notes = draft.notes))
+    }
+
+    fun toggle(item: GroceryItem) = listAction {
+        val uid = user.value?.uid ?: return@listAction
+        lists.value?.update(item.id, ItemPatch.toggle(item, uid))
+    }
+
+    fun delete(id: String) = listAction {
+        lists.value?.delete(id)
+    }
+
+    private fun authAction(block: suspend () -> Unit) {
+        _authError.value = null
+        scope.launch {
+            try {
+                block()
+            } catch (error: Exception) {
+                _authError.value = error.message ?: "Something went wrong. Try again."
+            }
+        }
+    }
+
+    private fun listAction(block: suspend () -> Unit) {
+        _listError.value = null
+        scope.launch {
+            try {
+                block()
+            } catch (error: Exception) {
+                _listError.value = error.message ?: "Couldn't save that change. Try again."
+            }
+        }
+    }
+
+    override fun onCleared() {
+        scope.cancel()
+    }
+
+    class Factory(private val container: AppContainer) : ViewModelProvider.Factory {
+        @Suppress("UNCHECKED_CAST")
+        override fun <T : ViewModel> create(modelClass: Class<T>): T = AppViewModel(container) as T
+    }
+}

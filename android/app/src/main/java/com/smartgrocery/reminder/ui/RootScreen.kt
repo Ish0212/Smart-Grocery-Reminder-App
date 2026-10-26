@@ -13,15 +13,16 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.lifecycle.viewmodel.compose.viewModel
+import com.smartgrocery.reminder.ui.screens.AuthScreen
 import com.smartgrocery.reminder.ui.screens.PlaceholderScreen
+import com.smartgrocery.reminder.ui.screens.SettingsScreen
 import com.smartgrocery.reminder.ui.screens.ShoppingListScreen
 
 private enum class Tab(val label: String, val icon: ImageVector) {
@@ -32,7 +33,13 @@ private enum class Tab(val label: String, val icon: ImageVector) {
 }
 
 @Composable
-fun RootScreen(viewModel: GroceryViewModel = viewModel()) {
+fun RootScreen(viewModel: AppViewModel) {
+    val user by viewModel.user.collectAsState()
+    if (user == null) {
+        AuthScreen(viewModel)
+        return
+    }
+
     var selected by rememberSaveable { mutableStateOf(Tab.Shopping) }
 
     Scaffold(
@@ -60,10 +67,7 @@ fun RootScreen(viewModel: GroceryViewModel = viewModel()) {
                     title = "Places",
                     message = "Stores and home arrive in phase 4.",
                 )
-                Tab.Settings -> PlaceholderScreen(
-                    title = "Settings",
-                    message = "Preferences and diagnostics arrive in phase 4.",
-                )
+                Tab.Settings -> SettingsScreen(viewModel)
             }
         }
     }
