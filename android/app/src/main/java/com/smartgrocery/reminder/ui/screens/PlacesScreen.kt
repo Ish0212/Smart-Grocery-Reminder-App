@@ -80,6 +80,11 @@ fun PlacesScreen(reminders: ReminderStore) {
             ) {
                 Text(if (home == null) "Set home from my location" else "Use my location as home")
             }
+            PlaceSearch("Search for a home address") { name, latitude, longitude ->
+                val others = reminders.places.value.filterNot { it.kind == PlaceKind.Home }
+                reminders.savePlaces(others + Place(Place.HOME_ID, name, PlaceKind.Home, latitude, longitude))
+                status = "Home saved."
+            }
         }
         item {
             SectionTitle("Grocery stores")
@@ -90,6 +95,12 @@ fun PlacesScreen(reminders: ReminderStore) {
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
+            PlaceSearch("Search for a store") { name, latitude, longitude ->
+                reminders.savePlaces(
+                    reminders.places.value + Place(UUID.randomUUID().toString(), name, PlaceKind.Store, latitude, longitude),
+                )
+                status = "$name saved."
+            }
             Button(
                 onClick = {
                     scope.launch {

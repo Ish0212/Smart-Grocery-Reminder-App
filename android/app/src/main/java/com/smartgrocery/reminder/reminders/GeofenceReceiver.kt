@@ -18,7 +18,9 @@ class GeofenceReceiver : BroadcastReceiver() {
         val place = reminders.places.value.firstOrNull { it.id == placeId } ?: return
         val now = System.currentTimeMillis()
 
-        when (val action = ReminderPolicy.decide(place.kind, now, reminders.lastFiredAt(placeId), reminders.openItemCount())) {
+        val action = ReminderPolicy.decide(place.kind, now, reminders.lastFiredAt(placeId), reminders.openItemCount())
+        reminders.diagnostics.log("Entered ${place.name}: $action")
+        when (action) {
             ReminderAction.Ignore -> return
             is ReminderAction.StoreReminder -> Notifications.storeReminder(context, place.name, action.openItems)
             ReminderAction.StartUnloadTimer -> reminders.startUnloadTimer(now)

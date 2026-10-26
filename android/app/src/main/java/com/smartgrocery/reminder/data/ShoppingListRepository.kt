@@ -27,4 +27,7 @@ interface ShoppingListRepository {
     suspend fun add(draft: ItemDraft)
     suspend fun update(id: String, patch: ItemPatch)
     suspend fun delete(id: String)
+
+    /** Removes every item. Used when the account is deleted. */
+    suspend fun deleteAll()
 }

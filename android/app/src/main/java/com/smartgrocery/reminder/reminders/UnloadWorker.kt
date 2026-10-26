@@ -21,6 +21,7 @@ class UnloadWorker(context: Context, params: WorkerParameters) : Worker(context,
         if (reminders.countdown.value?.endsAtMillis == endsAt) {
             reminders.clearCountdown()
             Notifications.unloadReminder(applicationContext)
+            reminders.diagnostics.log("Unload reminder shown")
         }
         return Result.success()
     }

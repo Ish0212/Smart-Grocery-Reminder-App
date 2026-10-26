@@ -37,4 +37,8 @@ class MockShoppingListRepository(initial: List<GroceryItem> = SampleData.grocery
     override suspend fun delete(id: String) {
         items.update { list -> list.filterNot { it.id == id } }
     }
+
+    override suspend fun deleteAll() {
+        items.value = emptyList()
+    }
 }

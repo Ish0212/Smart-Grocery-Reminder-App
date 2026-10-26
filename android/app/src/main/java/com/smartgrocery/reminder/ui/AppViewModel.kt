@@ -72,6 +72,12 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         scope.launch { container.auth.signOut() }
     }
 
+    /** Removes the list first, then the account. The user is signed out when the account goes. */
+    fun deleteAccount() = authAction {
+        lists.value?.deleteAll()
+        container.auth.deleteAccount()
+    }
+
     fun addItem(draft: ItemDraft) = listAction {
         lists.value?.add(draft)
     }

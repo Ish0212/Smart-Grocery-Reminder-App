@@ -72,6 +72,15 @@ class FirestoreShoppingListRepository(
         items.document(id).delete().await()
     }
 
+    override suspend fun deleteAll() {
+        // Firestore batches hold at most 500 writes.
+        items.get().await().documents.chunked(400).forEach { chunk ->
+            val batch = items.firestore.batch()
+            chunk.forEach { batch.delete(it.reference) }
+            batch.commit().await()
+        }
+    }
+
     private fun DocumentSnapshot.toGroceryItem(): GroceryItem? {
         val title = getString("title") ?: return null
         return GroceryItem(

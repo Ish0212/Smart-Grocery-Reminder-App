@@ -20,4 +20,7 @@ interface AuthService {
     suspend fun signUp(email: String, password: String, displayName: String)
     suspend fun sendPasswordReset(email: String)
     suspend fun signOut()
+
+    /** Deletes the account itself. Firebase asks the user to sign in again if it's been too long. */
+    suspend fun deleteAccount()
 }
