@@ -58,13 +58,14 @@ class FirestoreListSharing(private val firestore: FirebaseFirestore) : ListShari
     }
 
     override suspend fun createInvite(uid: String): String {
-        // The owner's list document must exist before anyone can join it. create() fails harmlessly if it does.
-        try {
-            firestore.collection("lists").document(uid)
-                .create(mapOf("ownerId" to uid, "memberIds" to listOf(uid)))
-                .await()
-        } catch (error: FirebaseFirestoreException) {
-            if (error.code != FirebaseFirestoreException.Code.ALREADY_EXISTS) throw error
+        // The owner's list document must exist before anyone can join it. A flag on the owner's own
+        // user document says it was made, since a non-member can't read the list to check.
+        val userDocument = firestore.collection("users").document(uid)
+        if (userDocument.get().await().getBoolean("listCreated") != true) {
+            val batch = firestore.batch()
+            batch.set(firestore.collection("lists").document(uid), mapOf("ownerId" to uid, "memberIds" to listOf(uid)))
+            batch.set(userDocument, mapOf("listCreated" to true), SetOptions.merge())
+            batch.commit().await()
         }
 
         val code = InviteCode.generate()

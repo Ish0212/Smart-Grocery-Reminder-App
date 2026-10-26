@@ -1,6 +1,7 @@
 package com.smartgrocery.reminder.widget
 
 import android.content.Context
+import android.content.Intent
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -13,6 +14,7 @@ import androidx.glance.appwidget.action.ActionCallback
 import androidx.glance.appwidget.action.actionRunCallback
 import androidx.glance.appwidget.action.actionStartActivity
 import androidx.glance.appwidget.provideContent
+import androidx.glance.appwidget.updateAll
 import androidx.glance.layout.Column
 import androidx.glance.layout.fillMaxSize
 import androidx.glance.layout.padding
@@ -34,13 +36,14 @@ class GroceryWidget : GlanceAppWidget() {
         val titles = reminders.openItemTitles()
         val countdown = reminders.countdown.value
         val ink = ColorProvider(day = Color(0xFF1C1C1E), night = Color(0xFFF2F2F7))
+        val openApp = actionStartActivity(Intent(context, MainActivity::class.java))
 
         provideContent {
             Column(
                 modifier = GlanceModifier
                     .fillMaxSize()
                     .padding(12.dp)
-                    .clickable(actionStartActivity<MainActivity>()),
+                    .clickable(openApp),
             ) {
                 Text(
                     "To buy (${titles.size})",
