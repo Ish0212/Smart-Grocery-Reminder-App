@@ -43,7 +43,7 @@ jobs:
           "$SDKMANAGER" "platforms;android-35" "build-tools;35.0.0"
 
       - name: Build, test and lint
-        run: gradle assembleDebug testDebugUnitTest lint --no-daemon
+        run: gradle assembleDebug assembleDebugAndroidTest testDebugUnitTest lint --no-daemon
 
       - name: Upload the debug APK
         uses: actions/upload-artifact@v4

@@ -2,6 +2,17 @@
 
 SwiftUI app for location-aware grocery lists and home-arrival “unload the car” reminders. It runs on a built-in mock backend, and switches to Firebase Auth + Firestore automatically when a `GoogleService-Info.plist` is present. Releasing it to the App Store: [docs/app-store/release.md](docs/app-store/release.md).
 
+## Android
+
+The same app for Android, in `android/`: Kotlin and Jetpack Compose, with the same Firebase backend and security rules. It covers the same features: the list with offline sync and shared lists, store and home geofences with notifications, the unload timer, Places search, receipt scanning on the device, the home-screen widget, and diagnostics.
+
+- **Build and test:** `android-ci.yml` runs on every change under `android/`: the debug build, unit tests and lint, on Ubuntu. The first run of a new checkout needs `gradle wrapper --gradle-version 8.10.2` inside `android/`, or install Gradle yourself; Android Studio does this for you.
+- **Demo:** without `android/app/google-services.json` the app uses the in-memory demo account (`demo@grocery.app` / `demo123`). Shared lists need Firebase.
+- **Keys:** place search needs `MAPS_API_KEY=...` in `android/local.properties`.
+- **Release:** `docs/play-store/release.md` lists the accounts and secrets. The `Android release` workflow builds a signed bundle and takes the Play Store screenshots on an emulator.
+
+Not verified on a device yet: the Firebase, Places and widget paths, which need the keys and accounts above.
+
 ## Demo
 
 [Watch the demo video (docs/media/demo.mp4)](docs/media/demo.mp4): the list, checking items off, adding an item, the arrival timer, places, settings and diagnostics. It's a recording of the screenshot UI test running on the newest Pro Max simulator in CI.

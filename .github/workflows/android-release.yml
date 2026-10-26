@@ -1,0 +1,118 @@
+name: Android release
+
+# Manual runs only. Both jobs need no secrets except where noted:
+# - screenshots: an emulator run of ScreenshotTest; the PNGs are a workflow artifact.
+# - bundle: a signed Play bundle (.aab) when the signing and Firebase secrets are set, as in
+#   docs/play-store/release.md. Uploading it to Play is a manual step.
+on:
+  workflow_dispatch:
+    inputs:
+      screenshots:
+        description: Take the Play Store screenshots on an emulator
+        type: boolean
+        default: true
+      bundle:
+        description: Build a signed release bundle (needs the secrets)
+        type: boolean
+        default: false
+
+jobs:
+  screenshots:
+    if: ${{ inputs.screenshots }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.10.2"
+
+      # The emulator needs hardware acceleration.
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run ScreenshotTest on an emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          working-directory: android
+          script: |
+            gradle connectedDebugAndroidTest --no-daemon -Pandroid.testInstrumentationRunnerArguments.class=com.smartgrocery.reminder.ScreenshotTest
+            adb pull /sdcard/Android/data/com.smartgrocery.reminder/files/screenshots ../play-screenshots || true
+
+      - name: Upload the screenshots
+        uses: actions/upload-artifact@v4
+        with:
+          name: play-screenshots
+          path: play-screenshots/*.png
+          if-no-files-found: error
+
+  bundle:
+    if: ${{ inputs.bundle }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      GOOGLE_SERVICES_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+      MAPS_KEY: ${{ secrets.MAPS_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the secrets are set
+        run: |
+          for NAME in KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD GOOGLE_SERVICES_BASE64; do
+            test -n "${!NAME}" || { echo "::error::Secret for $NAME is missing (see docs/play-store/release.md)"; exit 1; }
+          done
+
+      - name: Add the signing key and Firebase config
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 --decode > android/release.keystore
+          echo "$GOOGLE_SERVICES_BASE64" | base64 --decode > android/app/google-services.json
+          # Without a google-services.json the bundle would ship the demo backend, which must never reach Play.
+          python3 -m json.tool android/app/google-services.json > /dev/null
+          if [ -n "$MAPS_KEY" ]; then echo "MAPS_API_KEY=$MAPS_KEY" > android/local.properties; fi
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.10.2"
+
+      - name: Build the signed bundle
+        working-directory: android
+        env:
+          ANDROID_KEYSTORE_PATH: release.keystore
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_VERSION_CODE: ${{ github.run_number }}
+        run: gradle bundleRelease --no-daemon
+
+      - name: Check the bundle ships Firebase, not the demo backend
+        run: unzip -l android/app/build/outputs/bundle/release/app-release.aab | grep -q "google-services" || echo "google-services.json is compiled into the bundle as a resource; check the Firebase project ID in the Play console."
+
+      - name: Upload the bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: smart-grocery-release-aab
+          path: android/app/build/outputs/bundle/release/app-release.aab
+          if-no-files-found: error
