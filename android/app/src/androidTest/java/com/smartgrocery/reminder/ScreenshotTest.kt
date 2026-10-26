@@ -8,6 +8,7 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.test.platform.app.InstrumentationRegistry
@@ -51,7 +52,7 @@ class ScreenshotTest {
     /** Captured from the app's own process, so the file lands in the folder the workflow pulls from. */
     private fun capture(name: String) {
         composeRule.waitForIdle()
-        val bitmap = composeRule.onRoot().captureToImage().asAndroidBitmap()
+        val bitmap = onRoot().captureToImage().asAndroidBitmap()
         val file = File(folder, "$name.png")
         FileOutputStream(file).use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
         assertTrue("Empty screenshot: $name", file.length() > 0)
