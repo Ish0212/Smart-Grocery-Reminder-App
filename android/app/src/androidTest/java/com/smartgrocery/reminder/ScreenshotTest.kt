@@ -52,7 +52,7 @@ class ScreenshotTest {
     /** Captured from the app's own process, so the file lands in the folder the workflow pulls from. */
     private fun capture(name: String) {
         composeRule.waitForIdle()
-        val bitmap = onRoot().captureToImage().asAndroidBitmap()
+        val bitmap = composeRule.onRoot().captureToImage().asAndroidBitmap()
         val file = File(folder, "$name.png")
         FileOutputStream(file).use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
         assertTrue("Empty screenshot: $name", file.length() > 0)
