@@ -38,7 +38,9 @@ jobs:
 
       # The runner image has the Android SDK; this makes sure the compile platform is installed.
       - name: Install Android platform 35
-        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+        run: |
+          SDKMANAGER="$(ls "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager | head -1)"
+          "$SDKMANAGER" "platforms;android-35" "build-tools;35.0.0"
 
       - name: Build, test and lint
         run: gradle assembleDebug testDebugUnitTest lint --no-daemon
