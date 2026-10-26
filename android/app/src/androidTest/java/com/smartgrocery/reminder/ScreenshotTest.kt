@@ -1,17 +1,21 @@
 package com.smartgrocery.reminder
 
+import android.graphics.Bitmap
+import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
-import androidx.compose.ui.test.hasClickAction
 import androidx.test.platform.app.InstrumentationRegistry
-import androidx.test.uiautomator.UiDevice
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import java.io.File
+import java.io.FileOutputStream
 
 /**
  * Takes the Play Store screenshots on an emulator (see .github/workflows/android-release.yml).
@@ -22,10 +26,10 @@ class ScreenshotTest {
     @get:Rule
     val composeRule = createAndroidComposeRule<MainActivity>()
 
-    private val instrumentation = InstrumentationRegistry.getInstrumentation()
-    private val device = UiDevice.getInstance(instrumentation)
     private val folder: File by lazy {
-        instrumentation.targetContext.getExternalFilesDir("screenshots")!!.apply { mkdirs() }
+        InstrumentationRegistry.getInstrumentation().targetContext
+            .getExternalFilesDir("screenshots")!!
+            .apply { mkdirs() }
     }
 
     @Test
@@ -37,18 +41,19 @@ class ScreenshotTest {
 
         capture("1-List")
         composeRule.onNodeWithText("Arrival").performClick()
-        composeRule.waitForIdle()
         capture("2-Arrival")
         composeRule.onNodeWithText("Places").performClick()
-        composeRule.waitForIdle()
         capture("3-Places")
         composeRule.onNodeWithText("Settings").performClick()
-        composeRule.waitForIdle()
         capture("4-Settings")
     }
 
+    /** Captured from the app's own process, so the file lands in the folder the workflow pulls from. */
     private fun capture(name: String) {
         composeRule.waitForIdle()
-        device.takeScreenshot(File(folder, "$name.png"))
+        val bitmap = composeRule.onRoot().captureToImage().asAndroidBitmap()
+        val file = File(folder, "$name.png")
+        FileOutputStream(file).use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        assertTrue("Empty screenshot: $name", file.length() > 0)
     }
 }
