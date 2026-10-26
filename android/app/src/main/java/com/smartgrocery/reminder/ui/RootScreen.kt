@@ -20,8 +20,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import com.smartgrocery.reminder.ui.screens.ArrivalScreen
 import com.smartgrocery.reminder.ui.screens.AuthScreen
-import com.smartgrocery.reminder.ui.screens.PlaceholderScreen
+import com.smartgrocery.reminder.ui.screens.PlacesScreen
 import com.smartgrocery.reminder.ui.screens.SettingsScreen
 import com.smartgrocery.reminder.ui.screens.ShoppingListScreen
 
@@ -59,14 +60,8 @@ fun RootScreen(viewModel: AppViewModel) {
         Box(Modifier.padding(padding)) {
             when (selected) {
                 Tab.Shopping -> ShoppingListScreen(viewModel)
-                Tab.Arrival -> PlaceholderScreen(
-                    title = "Home arrival",
-                    message = "The unload-the-car timer arrives in phase 3.",
-                )
-                Tab.Places -> PlaceholderScreen(
-                    title = "Places",
-                    message = "Stores and home arrive in phase 4.",
-                )
+                Tab.Arrival -> ArrivalScreen(viewModel.reminders)
+                Tab.Places -> PlacesScreen(viewModel.reminders)
                 Tab.Settings -> SettingsScreen(viewModel)
             }
         }
