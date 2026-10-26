@@ -2,6 +2,22 @@
 
 SwiftUI app for location-aware grocery lists and home-arrival “unload the car” reminders. It runs on a built-in mock backend, and switches to Firebase Auth + Firestore automatically when a `GoogleService-Info.plist` is present. Releasing it to the App Store: [docs/app-store/release.md](docs/app-store/release.md).
 
+## Demo
+
+[Watch the demo video (docs/media/demo.mp4)](docs/media/demo.mp4): the list, checking items off, adding an item, the arrival timer, places, settings and diagnostics. It's a recording of the screenshot UI test running on the newest Pro Max simulator in CI.
+
+| Grocery list | Checked off | Add item |
+|---|---|---|
+| ![Grocery list](docs/screenshots/1-List.png) | ![Checked off](docs/screenshots/2-Checked-Off.png) | ![Add item](docs/screenshots/3-Add-Item.png) |
+
+| Home arrival | Places | Settings |
+|---|---|---|
+| ![Home arrival](docs/screenshots/4-Arrival.png) | ![Places](docs/screenshots/5-Places.png) | ![Settings](docs/screenshots/6-Settings.png) |
+
+| Diagnostics |
+|---|
+| ![Diagnostics](docs/screenshots/7-Diagnostics.png) |
+
 ## Features
 
 - Shopping list with add / complete / delete

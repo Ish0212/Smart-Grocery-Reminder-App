@@ -66,9 +66,13 @@ jobs:
             --cellularMode active --cellularBars 4 --wifiBars 3
           echo "udid=$UDID" >> "$GITHUB_OUTPUT"
 
-      - name: Take the screenshots
+      # Records the whole run so the README can show it. simctl stops the recording on SIGINT and saves the file.
+      - name: Take the screenshots and record the run
         run: |
-          set -o pipefail
+          mkdir -p build/video
+          xcrun simctl io "${{ steps.sim.outputs.udid }}" recordVideo --codec=h264 --force build/video/demo.mp4 &
+          RECORDER=$!
+          set +e
           xcodebuild \
             -project SmartGroceryReminder.xcodeproj \
             -scheme Screenshots \
@@ -78,6 +82,10 @@ jobs:
             -derivedDataPath build/DerivedData \
             CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" \
             test
+          STATUS=$?
+          kill -INT "$RECORDER"
+          wait "$RECORDER"
+          exit "$STATUS"
 
       - name: Export the screenshots
         run: |
@@ -101,13 +109,19 @@ jobs:
               *) echo "::error::$PNG is $SIZE, not a 6.9-inch iPhone screenshot size"; exit 1 ;;
             esac
           done
-          test "$(ls build/screenshots/*.png | wc -l)" -eq 4
+          test "$(ls build/screenshots/*.png | wc -l)" -eq 7
 
       - name: Upload the screenshots
         uses: actions/upload-artifact@v7
         with:
           name: app-store-screenshots
           path: build/screenshots/*.png
+
+      - name: Upload the demo video
+        uses: actions/upload-artifact@v7
+        with:
+          name: app-store-demo-video
+          path: build/video/demo.mp4
 
   release:
     if: ${{ inputs.release }}
