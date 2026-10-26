@@ -11,6 +11,7 @@ junit = "4.13.2"
 playServicesLocation = "21.3.0"
 places = "3.5.0"
 mlkitTextRecognition = "16.0.1"
+glance = "1.1.1"
 workRuntime = "2.10.0"
 coreKtx = "1.15.0"
 
@@ -30,6 +31,7 @@ firebase-auth = { group = "com.google.firebase", name = "firebase-auth" }
 play-services-location = { group = "com.google.android.gms", name = "play-services-location", version.ref = "playServicesLocation" }
 places = { group = "com.google.android.libraries.places", name = "places", version.ref = "places" }
 mlkit-text-recognition = { group = "com.google.mlkit", name = "text-recognition", version.ref = "mlkitTextRecognition" }
+glance-appwidget = { group = "androidx.glance", name = "glance-appwidget", version.ref = "glance" }
 firebase-firestore = { group = "com.google.firebase", name = "firebase-firestore" }
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "coroutines" }

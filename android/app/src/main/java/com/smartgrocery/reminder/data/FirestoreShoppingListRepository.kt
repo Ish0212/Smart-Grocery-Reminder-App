@@ -20,10 +20,10 @@ import java.util.Date
  */
 class FirestoreShoppingListRepository(
     firestore: FirebaseFirestore,
-    private val uid: String,
+    private val listId: String,
 ) : ShoppingListRepository {
 
-    private val items: CollectionReference = firestore.collection("lists").document(uid).collection("items")
+    private val items: CollectionReference = firestore.collection("lists").document(listId).collection("items")
 
     override fun observe(): Flow<ListSnapshot> = callbackFlow {
         val registration = items.addSnapshotListener(MetadataChanges.INCLUDE) { snapshot, error ->

@@ -54,6 +54,7 @@ fun SettingsScreen(viewModel: AppViewModel) {
         OutlinedButton(onClick = { showingDiagnostics = true }, modifier = Modifier.fillMaxWidth()) {
             Text("Diagnostics")
         }
+        SharedListSection(viewModel)
         Button(onClick = viewModel::signOut, modifier = Modifier.fillMaxWidth()) {
             Text("Sign out")
         }

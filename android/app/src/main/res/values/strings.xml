@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">Smart Grocery</string>
+    <string name="shortcut_add_item">Add item</string>
+    <string name="widget_description">Your open items and the unload timer</string>
 </resources>

@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import com.smartgrocery.reminder.AppContainer
 import com.smartgrocery.reminder.data.AuthUser
+import com.smartgrocery.reminder.data.InviteCode
 import com.smartgrocery.reminder.data.ItemDraft
 import com.smartgrocery.reminder.data.ListSnapshot
 import com.smartgrocery.reminder.data.ShoppingListRepository
@@ -35,9 +36,16 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     val user: StateFlow<AuthUser?> = container.auth.user
         .stateIn(scope, SharingStarted.Eagerly, container.auth.currentUser)
 
-    private val lists: StateFlow<ShoppingListRepository?> = user
-        .map { it?.let { signedIn -> container.listsFor(signedIn.uid) } }
-        .stateIn(scope, SharingStarted.Eagerly, user.value?.let { container.listsFor(it.uid) })
+    /** The list being worked in: the user's own, or a shared list they joined. Null when signed out. */
+    val activeListId: StateFlow<String?> = user
+        .flatMapLatest { signedIn ->
+            if (signedIn == null) flowOf(null) else container.sharing.activeListId(signedIn.uid)
+        }
+        .stateIn(scope, SharingStarted.Eagerly, user.value?.uid)
+
+    private val lists: StateFlow<ShoppingListRepository?> = activeListId
+        .map { listId -> listId?.let(container::listsFor) }
+        .stateIn(scope, SharingStarted.Eagerly, activeListId.value?.let(container::listsFor))
 
     val list: StateFlow<ListSnapshot> = lists
         .flatMapLatest { repository -> repository?.observe() ?: flowOf(ListSnapshot.Empty) }
@@ -45,18 +53,26 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
 
     val reminders: ReminderStore get() = container.reminders
 
-    init {
-        // The receivers read the open count to say how many items are left at a store.
-        scope.launch {
-            list.collect { snapshot -> reminders.setOpenItemCount(snapshot.items.count { !it.isCompleted }) }
-        }
-    }
-
     private val _authError = MutableStateFlow<String?>(null)
     val authError: StateFlow<String?> = _authError.asStateFlow()
 
     private val _listError = MutableStateFlow<String?>(null)
     val listError: StateFlow<String?> = _listError.asStateFlow()
+
+    private val _inviteCode = MutableStateFlow<String?>(null)
+    val inviteCode: StateFlow<String?> = _inviteCode.asStateFlow()
+
+    private val _shareStatus = MutableStateFlow<String?>(null)
+    val shareStatus: StateFlow<String?> = _shareStatus.asStateFlow()
+
+    init {
+        // The widget and the receivers read the open items from the device.
+        scope.launch {
+            list.collect { snapshot ->
+                reminders.setOpenItemTitles(snapshot.items.filterNot { it.isCompleted }.map { it.title })
+            }
+        }
+    }
 
     fun signIn(email: String, password: String) = authAction {
         container.auth.signIn(email, password)
@@ -120,6 +136,30 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
+    fun createInvite() = shareAction {
+        val uid = user.value?.uid ?: return@shareAction
+        _inviteCode.value = container.sharing.createInvite(uid)
+        _shareStatus.value = "Share this code with the person you're inviting."
+    }
+
+    fun joinList(code: String) = shareAction {
+        val uid = user.value?.uid ?: return@shareAction
+        val normalized = code.trim().uppercase()
+        if (!InviteCode.isWellFormed(normalized)) {
+            throw IllegalArgumentException("Invite codes are 8 letters or numbers.")
+        }
+        container.sharing.join(uid, normalized)
+        _inviteCode.value = null
+        _shareStatus.value = "You joined the list."
+    }
+
+    fun leaveList() = shareAction {
+        val uid = user.value?.uid ?: return@shareAction
+        val listId = activeListId.value ?: return@shareAction
+        container.sharing.leave(uid, listId)
+        _shareStatus.value = "You're back on your own list."
+    }
+
     private fun authAction(block: suspend () -> Unit) {
         _authError.value = null
         scope.launch {
@@ -138,6 +178,17 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                 block()
             } catch (error: Exception) {
                 _listError.value = error.message ?: "Couldn't save that change. Try again."
+            }
+        }
+    }
+
+    private fun shareAction(block: suspend () -> Unit) {
+        _shareStatus.value = null
+        scope.launch {
+            try {
+                block()
+            } catch (error: Exception) {
+                _shareStatus.value = error.message ?: "Something went wrong. Try again."
             }
         }
     }
