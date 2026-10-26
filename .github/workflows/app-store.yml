@@ -73,7 +73,15 @@ jobs:
           xcrun simctl io "${{ steps.sim.outputs.udid }}" recordVideo --codec=h264 --force build/video/demo.mp4 &
           RECORDER=$!
           set +e
-          xcodebuild             -project SmartGroceryReminder.xcodeproj             -scheme Screenshots             -clonedSourcePackagesDirPath .spm             -destination "id=${{ steps.sim.outputs.udid }}"             -resultBundlePath build/Screenshots.xcresult             -derivedDataPath build/DerivedData             CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY=""             test
+          xcodebuild \
+            -project SmartGroceryReminder.xcodeproj \
+            -scheme Screenshots \
+            -clonedSourcePackagesDirPath .spm \
+            -destination "id=${{ steps.sim.outputs.udid }}" \
+            -resultBundlePath build/Screenshots.xcresult \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" \
+            test
           STATUS=$?
           kill -INT "$RECORDER"
           wait "$RECORDER"
