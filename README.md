@@ -4,7 +4,7 @@ SwiftUI app for location-aware grocery lists and home-arrival â€œunload the carâ
 
 ## Demo
 
-[Watch the demo video (docs/media/demo.mp4)](docs/media/demo.mp4): the list, checking items off, adding an item, the arrival timer, places, settings and diagnostics. It's a recording of the screenshot UI test running on the iPhone 16 Pro Max simulator in CI.
+[Watch the demo video (docs/media/demo.mp4)](docs/media/demo.mp4): the list, checking items off, adding an item, the arrival timer, places, settings and diagnostics. It's a recording of the screenshot UI test running on the newest Pro Max simulator in CI.
 
 | Grocery list | Checked off | Add item |
 |---|---|---|
