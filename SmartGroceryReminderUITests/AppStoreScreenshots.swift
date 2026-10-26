@@ -32,7 +32,11 @@ final class AppStoreScreenshots: XCTestCase {
         openTab("Arrival", name: "4-Arrival")
         openTab("Places", name: "5-Places")
         openTab("Settings", name: "6-Settings")
-        app.buttons["Diagnostics"].tap()
+        let diagnostics = app.buttons["Diagnostics"]
+        for _ in 0..<5 where !diagnostics.isHittable {
+            app.swipeUp()
+        }
+        diagnostics.tap()
         XCTAssertTrue(app.navigationBars["Diagnostics"].waitForExistence(timeout: 5))
         capture("7-Diagnostics")
     }
