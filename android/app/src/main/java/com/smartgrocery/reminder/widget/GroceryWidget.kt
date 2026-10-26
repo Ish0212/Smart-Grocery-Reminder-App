@@ -2,6 +2,7 @@ package com.smartgrocery.reminder.widget
 
 import android.content.Context
 import android.content.Intent
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.glance.GlanceId
@@ -14,6 +15,7 @@ import androidx.glance.appwidget.action.actionRunCallback
 import androidx.glance.appwidget.action.actionStartActivity
 import androidx.glance.appwidget.provideContent
 import androidx.glance.appwidget.updateAll
+import androidx.glance.background
 import androidx.glance.layout.Column
 import androidx.glance.layout.fillMaxSize
 import androidx.glance.layout.padding
@@ -21,7 +23,6 @@ import androidx.glance.text.Text
 import androidx.glance.text.TextStyle
 import androidx.glance.unit.ColorProvider
 import com.smartgrocery.reminder.MainActivity
-import com.smartgrocery.reminder.R
 import com.smartgrocery.reminder.SmartGroceryApplication
 import java.text.DateFormat
 import java.util.Date
@@ -35,13 +36,15 @@ class GroceryWidget : GlanceAppWidget() {
         val reminders = (context.applicationContext as SmartGroceryApplication).container.reminders
         val titles = reminders.openItemTitles()
         val countdown = reminders.countdown.value
-        val ink = ColorProvider(R.color.widget_ink)
+        // A fixed light card with dark text reads in both themes.
+        val ink = ColorProvider(Color(0xFF1C1C1E))
         val openApp = actionStartActivity(Intent(context, MainActivity::class.java))
 
         provideContent {
             Column(
                 modifier = GlanceModifier
                     .fillMaxSize()
+                    .background(Color(0xFFF2F2F7))
                     .padding(12.dp)
                     .clickable(openApp),
             ) {
