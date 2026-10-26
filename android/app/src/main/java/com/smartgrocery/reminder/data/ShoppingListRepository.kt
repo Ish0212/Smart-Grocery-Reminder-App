@@ -8,6 +8,8 @@ data class ItemDraft(
     val title: String,
     val aisle: String = "",
     val notes: String = "",
+    /** Set to add the item already checked off by this user (a receipt purchase). */
+    val completedBy: String? = null,
 )
 
 data class ListSnapshot(

@@ -44,17 +44,17 @@ class FirestoreShoppingListRepository(
     override suspend fun add(draft: ItemDraft) {
         val document = items.document()
         val now = Timestamp(Date())
-        document.set(
-            mapOf(
-                "id" to document.id,
-                "title" to draft.title,
-                "aisle" to draft.aisle,
-                "notes" to draft.notes,
-                "isCompleted" to false,
-                "createdAt" to now,
-                "updatedAt" to now,
-            ),
-        ).await()
+        val fields = mutableMapOf<String, Any>(
+            "id" to document.id,
+            "title" to draft.title,
+            "aisle" to draft.aisle,
+            "notes" to draft.notes,
+            "isCompleted" to (draft.completedBy != null),
+            "createdAt" to now,
+            "updatedAt" to now,
+        )
+        draft.completedBy?.let { fields["completedBy"] = it }
+        document.set(fields).await()
     }
 
     override suspend fun update(id: String, patch: ItemPatch) {
