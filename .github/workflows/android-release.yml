@@ -50,7 +50,8 @@ jobs:
           disable-animations: true
           working-directory: android
           script: |
-            gradle connectedDebugAndroidTest --no-daemon -Pandroid.testInstrumentationRunnerArguments.class=com.smartgrocery.reminder.ScreenshotTest
+            gradle installDebug installDebugAndroidTest --no-daemon
+            adb shell am instrument -w -e class com.smartgrocery.reminder.ScreenshotTest com.smartgrocery.reminder.test/androidx.test.runner.AndroidJUnitRunner > ../instrument.log; cat ../instrument.log; grep -q 'OK (1 test)' ../instrument.log
             mkdir -p ../play-screenshots
             for NAME in 1-List 2-Arrival 3-Places 4-Settings; do adb exec-out run-as com.smartgrocery.reminder cat files/screenshots/$NAME.png > ../play-screenshots/$NAME.png; done
 
