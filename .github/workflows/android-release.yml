@@ -51,7 +51,10 @@ jobs:
           working-directory: android
           script: |
             gradle connectedDebugAndroidTest --no-daemon -Pandroid.testInstrumentationRunnerArguments.class=com.smartgrocery.reminder.ScreenshotTest
-            adb pull /data/local/tmp/screenshots ../play-screenshots
+            mkdir -p ../play-screenshots
+            for NAME in 1-List 2-Arrival 3-Places 4-Settings; do
+              adb exec-out run-as com.smartgrocery.reminder cat files/screenshots/$NAME.png > ../play-screenshots/$NAME.png
+            done
 
       - name: Upload the screenshots
         uses: actions/upload-artifact@v4

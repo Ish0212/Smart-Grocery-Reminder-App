@@ -11,6 +11,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
+import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -26,8 +27,10 @@ class ScreenshotTest {
     @get:Rule
     val composeRule = createAndroidComposeRule<MainActivity>()
 
-    // World-writable on the emulator, and readable by adb: the app's own folders aren't on Android 11+.
-    private val folder: File = File("/data/local/tmp/screenshots").apply { mkdirs() }
+    // The app's private folder. The workflow copies the PNGs out with `adb shell run-as`, which works for debug builds.
+    private val folder: File by lazy {
+        InstrumentationRegistry.getInstrumentation().targetContext.filesDir.resolve("screenshots").apply { mkdirs() }
+    }
 
     @Test
     fun captureScreens() {
