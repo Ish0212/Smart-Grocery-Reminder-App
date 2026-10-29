@@ -277,9 +277,17 @@ struct GroceryRow: View {
                         .strikethrough(item.isCompleted)
                         .foregroundStyle(.primary)
                     if !item.aisle.isEmpty || !item.notes.isEmpty {
-                        Text([item.aisle, item.notes].filter { !$0.isEmpty }.joined(separator: " · "))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        HStack(spacing: 8) {
+                            if !item.aisle.isEmpty {
+                                AisleChip(aisle: item.aisle)
+                            }
+                            if !item.notes.isEmpty {
+                                Text(item.notes)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                        }
                     }
                 }
                 Spacer(minLength: 0)

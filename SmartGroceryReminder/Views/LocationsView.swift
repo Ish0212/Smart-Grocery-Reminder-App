@@ -141,11 +141,18 @@ struct LocationsView: View {
     }
 
     private func placeRow(_ place: GeoPlace) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(place.name).font(.body.weight(.medium))
-            Text(String(format: "%.4f, %.4f · %.0fm radius", place.latitude, place.longitude, place.radiusMeters))
-                .font(.caption)
-                .foregroundStyle(.secondary)
+        // Same colors as the map pins.
+        HStack(spacing: 12) {
+            IconBadge(
+                systemImage: place.kind == .home ? "house.fill" : "cart.fill",
+                color: place.kind == .home ? Color("AccentGreen") : .orange
+            )
+            VStack(alignment: .leading, spacing: 4) {
+                Text(place.name).font(.body.weight(.medium))
+                Text(String(format: "%.4f, %.4f · %.0fm radius", place.latitude, place.longitude, place.radiusMeters))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .accessibilityElement(children: .combine)
     }
