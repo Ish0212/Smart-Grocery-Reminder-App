@@ -113,7 +113,7 @@ struct AuthView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 14)
             }
-            .buttonStyle(.borderedProminent)
+            .prominentGlassButtonStyle()
             .tint(Color("AccentGreen"))
             .disabled(isLoading || email.isEmpty || password.isEmpty)
             .accessibilityHint("Signs you into the grocery reminder app")

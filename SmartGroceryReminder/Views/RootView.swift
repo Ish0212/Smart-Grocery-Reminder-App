@@ -56,6 +56,7 @@ struct MainTabView: View {
                 .tag(AppTab.settings)
         }
         .tint(Color("AccentGreen"))
+        .minimizesTabBarOnScroll()
         .onOpenURL { url in
             if let tab = AppTab(url: url) {
                 selection = tab

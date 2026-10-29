@@ -103,12 +103,10 @@ struct ShoppingListView: View {
                     .accessibilityLabel("Scan Receipt")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button {
+                    // The glass toolbar draws the circle; a filled-circle symbol would double it.
+                    Button("Add grocery item", systemImage: "plus") {
                         showingAdd = true
-                    } label: {
-                        Image(systemName: "plus.circle.fill")
                     }
-                    .accessibilityLabel("Add grocery item")
                 }
             }
             .sheet(isPresented: $showingAdd) {

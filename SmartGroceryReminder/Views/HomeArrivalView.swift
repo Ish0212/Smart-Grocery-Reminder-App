@@ -107,7 +107,7 @@ struct HomeArrivalView: View {
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 8)
                 }
-                .buttonStyle(.borderedProminent)
+                .prominentGlassButtonStyle()
                 .tint(Color("AccentGreen"))
             }
 
@@ -120,7 +120,7 @@ struct HomeArrivalView: View {
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 8)
                 }
-                .buttonStyle(.bordered)
+                .glassButtonStyle()
             }
         }
     }
