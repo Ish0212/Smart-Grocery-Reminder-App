@@ -26,9 +26,11 @@ struct HomeArrivalView: View {
 
     private var statusCard: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label(statusTitle, systemImage: statusIcon)
-                .font(.headline)
-                .foregroundStyle(Color("AccentGreen"))
+            HStack(spacing: 12) {
+                IconBadge(systemImage: statusIcon, color: statusColor, size: 36)
+                Text(statusTitle)
+                    .font(.headline)
+            }
 
             if timer.isActive {
                 Text(timer.formattedRemaining)
@@ -60,9 +62,15 @@ struct HomeArrivalView: View {
         return appState.unloadOutstanding ? "Reminder sent" : "Ready for arrival"
     }
 
+    /// Green while waiting, orange while counting down, pink once the reminder has gone out.
+    private var statusColor: Color {
+        if timer.isActive { return .orange }
+        return appState.unloadOutstanding ? .pink : Color("AccentGreen")
+    }
+
     private var statusIcon: String {
         if timer.isActive { return "timer" }
-        return appState.unloadOutstanding ? "bell.badge" : "house"
+        return appState.unloadOutstanding ? "bell.badge.fill" : "house.fill"
     }
 
     private var delayPicker: some View {
@@ -107,7 +115,7 @@ struct HomeArrivalView: View {
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 8)
                 }
-                .buttonStyle(.borderedProminent)
+                .prominentGlassButtonStyle()
                 .tint(Color("AccentGreen"))
             }
 
@@ -120,7 +128,7 @@ struct HomeArrivalView: View {
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 8)
                 }
-                .buttonStyle(.bordered)
+                .glassButtonStyle()
             }
         }
     }

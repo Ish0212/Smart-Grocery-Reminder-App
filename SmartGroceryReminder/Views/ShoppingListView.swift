@@ -103,12 +103,10 @@ struct ShoppingListView: View {
                     .accessibilityLabel("Scan Receipt")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button {
+                    // The glass toolbar draws the circle; a filled-circle symbol would double it.
+                    Button("Add grocery item", systemImage: "plus") {
                         showingAdd = true
-                    } label: {
-                        Image(systemName: "plus.circle.fill")
                     }
-                    .accessibilityLabel("Add grocery item")
                 }
             }
             .sheet(isPresented: $showingAdd) {
@@ -279,9 +277,17 @@ struct GroceryRow: View {
                         .strikethrough(item.isCompleted)
                         .foregroundStyle(.primary)
                     if !item.aisle.isEmpty || !item.notes.isEmpty {
-                        Text([item.aisle, item.notes].filter { !$0.isEmpty }.joined(separator: " · "))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        HStack(spacing: 8) {
+                            if !item.aisle.isEmpty {
+                                AisleChip(aisle: item.aisle)
+                            }
+                            if !item.notes.isEmpty {
+                                Text(item.notes)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                        }
                     }
                 }
                 Spacer(minLength: 0)

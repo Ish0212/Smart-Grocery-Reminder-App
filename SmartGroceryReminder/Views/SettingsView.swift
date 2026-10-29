@@ -47,7 +47,9 @@ struct SettingsView: View {
                 SharedListSection()
 
                 Section("Daily list reminder") {
-                    Toggle("Enabled", isOn: $appState.preferences.dailyListReminderEnabled)
+                    Toggle(isOn: $appState.preferences.dailyListReminderEnabled) {
+                        Label { Text("Enabled") } icon: { IconBadge(systemImage: "list.bullet", color: .blue) }
+                    }
                     DatePicker(
                         "Time",
                         selection: reminderDateBinding,
@@ -57,8 +59,12 @@ struct SettingsView: View {
                 }
 
                 Section("Location reminders") {
-                    Toggle("When entering a grocery store", isOn: $appState.preferences.storeEntryReminderEnabled)
-                    Toggle("Repeat car-unload reminder", isOn: $appState.preferences.repeatCarUnloadReminder)
+                    Toggle(isOn: $appState.preferences.storeEntryReminderEnabled) {
+                        Label { Text("When entering a grocery store") } icon: { IconBadge(systemImage: "cart.fill", color: .orange) }
+                    }
+                    Toggle(isOn: $appState.preferences.repeatCarUnloadReminder) {
+                        Label { Text("Repeat car-unload reminder") } icon: { IconBadge(systemImage: "car.fill", color: .pink) }
+                    }
                 }
 
                 Section("Notifications") {
@@ -72,8 +78,10 @@ struct SettingsView: View {
                 ReminderStatsSection(diagnostics: appState.diagnostics)
 
                 Section {
-                    NavigationLink("Diagnostics") {
+                    NavigationLink {
                         DiagnosticsView(diagnostics: appState.diagnostics)
+                    } label: {
+                        Label { Text("Diagnostics") } icon: { IconBadge(systemImage: "stethoscope", color: .gray) }
                     }
                 } header: {
                     Text("Troubleshooting")
